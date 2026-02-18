@@ -254,6 +254,14 @@ async def pair_bluetooth_device(req: PairRequest):
     return {"error": "Pairing failed", "address": req.address}
 
 
+@app.post("/api/bluetooth/force-pair")
+async def force_pair_bluetooth_device(req: PairRequest):
+    success = await bluez_manager.force_pair_device(req.address)
+    if success:
+        return {"status": "paired", "address": req.address}
+    return {"error": "Force pairing failed", "address": req.address}
+
+
 # --- Emulator endpoints ---
 
 @app.get("/api/emulators")

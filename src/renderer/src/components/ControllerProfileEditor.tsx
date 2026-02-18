@@ -10,6 +10,7 @@ export default function ControllerProfileEditor(): JSX.Element {
   const [editName, setEditName] = useState('')
   const [editImg, setEditImg] = useState('')
   const [editSnd, setEditSnd] = useState('')
+  const [editGuid, setEditGuid] = useState('')
 
   useEffect(() => {
     api.getProfiles().then((p) => setProfiles(p as ControllerProfile[])).catch(console.error)
@@ -22,6 +23,7 @@ export default function ControllerProfileEditor(): JSX.Element {
     setEditName(profile.custom_name || '')
     setEditImg(profile.img_src)
     setEditSnd(profile.snd_src)
+    setEditGuid(profile.guid_override || '')
   }
 
   const saveEdit = async () => {
@@ -29,12 +31,13 @@ export default function ControllerProfileEditor(): JSX.Element {
     await api.updateProfile(editing, {
       custom_name: editName || null,
       img_src: editImg,
-      snd_src: editSnd
+      snd_src: editSnd,
+      guid_override: editGuid || null
     })
     setProfiles(
       profiles.map((p) =>
         p.unique_id === editing
-          ? { ...p, custom_name: editName || undefined, img_src: editImg, snd_src: editSnd }
+          ? { ...p, custom_name: editName || undefined, img_src: editImg, snd_src: editSnd, guid_override: editGuid || undefined }
           : p
       )
     )
@@ -82,6 +85,15 @@ export default function ControllerProfileEditor(): JSX.Element {
                       </option>
                     ))}
                   </select>
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">GUID Override</label>
+                    <input
+                      value={editGuid}
+                      onChange={(e) => setEditGuid(e.target.value)}
+                      placeholder="Leave blank to use auto-detected GUID"
+                      className="w-full bg-gray-700 rounded px-2 py-1 text-xs font-mono"
+                    />
+                  </div>
                   <div className="flex gap-2">
                     <button
                       onClick={saveEdit}
@@ -112,6 +124,9 @@ export default function ControllerProfileEditor(): JSX.Element {
                       {profile.custom_name || profile.default_name}
                     </div>
                     <div className="text-xs text-gray-500">{profile.unique_id}</div>
+                    {profile.guid_override && (
+                      <div className="text-xs text-yellow-500 font-mono">GUID: {profile.guid_override}</div>
+                    )}
                   </div>
                 </div>
               )}

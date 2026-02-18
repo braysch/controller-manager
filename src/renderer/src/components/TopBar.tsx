@@ -13,7 +13,7 @@ export default function TopBar({ onSettingsClick }: TopBarProps): JSX.Element {
         className="p-2 rounded-lg hover:bg-gray-700 transition-colors"
         title="Settings"
       >
-        <Settings size={20} />
+        <Settings className='hover:rotate-[90deg] transition-all duration-300' size={32} />
       </button>
     </div>
   )

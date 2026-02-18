@@ -1,3 +1,5 @@
+import Button from './Button'
+
 interface BottomButtonsProps {
   onBack: () => void
   onReassign: () => void
@@ -12,28 +14,25 @@ export default function BottomButtons({
   hasReady
 }: BottomButtonsProps): JSX.Element {
   return (
-    <div className="flex items-center justify-between px-4 py-3 bg-gray-800 border-t border-gray-700">
-      <button
-        onClick={onBack}
-        className="px-4 py-2 text-sm rounded-lg bg-gray-700 hover:bg-gray-600 transition-colors"
-      >
-        Back
-      </button>
-      <div className="flex gap-2">
-        <button
-          onClick={onReassign}
-          disabled={!hasReady}
-          className="px-4 py-2 text-sm rounded-lg bg-gray-700 hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-        >
-          Reassign
-        </button>
-        <button
-          onClick={onOkay}
-          disabled={!hasReady}
-          className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors font-medium"
-        >
-          Okay
-        </button>
+    <div className="flex items-center justify-center px-4 py-3 bg-gray-800 border-t border-gray-700">
+      <div className="flex flex-1 w-full">
+        <Button onClick={onBack}>Back</Button>
+      </div>
+
+      <div className='text-xl px-8 w-full flex justify-center flex-1'>
+        <div className='flex justify-center gap-x-4 h-[75px]'>
+          <img className='h-full' src='file:///home/brayschway/Server Media/Games/Video Games/Stardew Valley/logo.png' alt='Game Logo'></img>
+          <img className='h-full' src='file:///home/brayschway/Server Media/Games/Emulators/Yuzu/logo.png' alt='Yuzu Logo'></img>
+        </div>
+      </div>
+
+      <div className="flex gap-2 flex-1 justify-end">
+        <Button onClick={onReassign} disabled={!hasReady}>
+          Reset Grip/Order
+        </Button>
+        <Button onClick={onOkay} disabled={!hasReady} variant="primary">
+          Start Software
+        </Button>
       </div>
     </div>
   )

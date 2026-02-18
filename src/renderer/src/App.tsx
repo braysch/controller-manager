@@ -28,7 +28,11 @@ function App(): JSX.Element {
           bluetoothScanning={bluetoothScanning}
           onClearBluetoothDevices={clearBluetoothDevices}
         />
+        <div className='flex h-full justify-center items-center w-full'>
+          <div className='w-[1200px]'>
         <ReadyGrid controllers={ready} />
+        </div>
+        </div>
       </div>
 
       <BottomButtons

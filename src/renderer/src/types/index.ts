@@ -25,6 +25,7 @@ export interface ControllerProfile {
   snd_src: string
   vendor_id?: number
   product_id?: number
+  guid_override?: string
 }
 
 export interface EmulatorConfig {

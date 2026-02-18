@@ -4,9 +4,26 @@ import asyncio
 import os
 import struct
 import select
-from typing import Callable, Optional, Any
+import time
+from typing import Callable, Optional
 
 from evdev import InputDevice, ecodes, list_devices
+
+# Analog trigger activation threshold (axes range 0-255)
+TRIGGER_THRESHOLD = 128
+# Seconds before the same device can fire the combo again
+COMBO_COOLDOWN = 1.5
+
+# Button combos: every button in a frozenset must be held simultaneously.
+# Listed in order of precedence; first match wins.
+_BUTTON_COMBOS: list[frozenset] = [
+    frozenset({ecodes.BTN_TL, ecodes.BTN_TR}),        # both bumpers (standard / paired Joy-Cons)
+    frozenset({ecodes.BTN_TL2, ecodes.BTN_TR2}),      # both digital triggers (standard / paired Joy-Cons)
+    frozenset({ecodes.BTN_TR, ecodes.BTN_TR2}),       # Left Joy-Con alone (SL + SR)
+    frozenset({ecodes.BTN_TL, ecodes.BTN_TL2}),       # Right Joy-Con alone (SL + SR)
+    frozenset({ecodes.BTN_WEST, ecodes.BTN_Z}),       # SNES: BTN_WEST + BTN_Z
+    frozenset({ecodes.BTN_Y, ecodes.BTN_Z}),          # SNES: BTN_Y + BTN_Z
+]
 
 
 class EvdevMonitor:
@@ -18,6 +35,16 @@ class EvdevMonitor:
         self._known_paths: set[str] = set()
         # Persistent device handles for button polling (path -> InputDevice)
         self._devices: dict[str, InputDevice] = {}
+        # Currently held buttons per device
+        self._held_buttons: dict[str, set[int]] = {}
+        # Latest analog trigger axis values per device {path: {axis_code: value}}
+        self._trigger_values: dict[str, dict[int, int]] = {}
+        # monotonic timestamp of last combo fire per device (for cooldown)
+        self._last_fired: dict[str, float] = {}
+        # Whether a device has real analog triggers (not IMU/gyro axes)
+        self._has_analog_triggers: dict[str, bool] = {}
+        # Ignore combo events until this monotonic time (skips init state sync)
+        self._ignore_until: dict[str, float] = {}
 
     def stop(self):
         self._running = False
@@ -116,10 +143,17 @@ class EvdevMonitor:
                 for path in new_paths:
                     try:
                         device = InputDevice(path)
+                        if not self._is_gamepad(device):
+                            self._known_paths.add(path)  # mark seen so we don't recheck every loop
+                            continue
                         info = self._get_device_info(device)
                         self._known_paths.add(path)
                         # Keep a persistent handle for button polling
                         self._devices[path] = device
+                        self._held_buttons[path] = set()
+                        self._trigger_values[path] = {}
+                        self._ignore_until[path] = time.monotonic() + 1.0
+                        self._has_analog_triggers[path] = self._detect_analog_triggers(device)
 
                         if self.on_connected:
                             await self.on_connected(info)
@@ -133,6 +167,11 @@ class EvdevMonitor:
                 for path in removed_paths:
                     self._known_paths.discard(path)
                     self._devices.pop(path, None)
+                    self._held_buttons.pop(path, None)
+                    self._trigger_values.pop(path, None)
+                    self._last_fired.pop(path, None)
+                    self._has_analog_triggers.pop(path, None)
+                    self._ignore_until.pop(path, None)
                     if self.on_disconnected:
                         await self.on_disconnected(path)
                     print(f"[EvdevMonitor] Disconnected: {path}")
@@ -145,6 +184,74 @@ class EvdevMonitor:
             except Exception as e:
                 print(f"[EvdevMonitor] Error in monitor loop: {e}")
                 await asyncio.sleep(1)
+
+    @staticmethod
+    def _is_gamepad(device: InputDevice) -> bool:
+        """Return True only if the device has at least one gamepad/joystick button.
+
+        This filters out IMU nodes (accelerometer/gyroscope only — no EV_KEY),
+        keyboards, mice, and other non-controller devices that share the same
+        /dev/input/ namespace.  Gamepad and joystick button codes live in the
+        range 0x120–0x13f (BTN_JOYSTICK through BTN_THUMBR).
+        """
+        try:
+            caps = device.capabilities()
+            keys = caps.get(ecodes.EV_KEY, [])
+            return any(0x120 <= code <= 0x13f for code in keys)
+        except Exception:
+            return False
+
+    @staticmethod
+    def _detect_analog_triggers(device: InputDevice) -> bool:
+        """Return True only if the device has real analog trigger axes.
+
+        Joy-Cons (and other IMU-equipped controllers) expose ABS_Z / ABS_RZ for
+        gyroscope or accelerometer data with ranges like ±32767.  Real analog
+        triggers use a 0-255 (or similar small) range.  We treat anything with
+        max > 512 as IMU data and exclude it from trigger detection.
+        """
+        try:
+            caps = device.capabilities()
+            abs_axes = dict(caps.get(ecodes.EV_ABS, []))
+            if ecodes.ABS_Z not in abs_axes or ecodes.ABS_RZ not in abs_axes:
+                return False
+            z_info = abs_axes[ecodes.ABS_Z]
+            rz_info = abs_axes[ecodes.ABS_RZ]
+            return (
+                z_info.min >= 0 and z_info.max <= 512 and
+                rz_info.min >= 0 and rz_info.max <= 512
+            )
+        except Exception:
+            return False
+
+    async def _check_combo(self, path: str):
+        """Fire on_button_press if the current held state matches any combo."""
+        now = time.monotonic()
+        # Skip events fired during the post-connect initialization window
+        if now < self._ignore_until.get(path, 0.0):
+            return
+        if now - self._last_fired.get(path, 0.0) < COMBO_COOLDOWN:
+            return
+
+        held = self._held_buttons.get(path, set())
+        triggers = self._trigger_values.get(path, {})
+
+        # Check digital button combos (first match wins)
+        for combo in _BUTTON_COMBOS:
+            if combo.issubset(held):
+                self._last_fired[path] = now
+                if self.on_button_press:
+                    await self.on_button_press(path, 0)
+                return
+
+        # Check analog triggers only for devices with real trigger axes
+        if self._has_analog_triggers.get(path, False):
+            left = triggers.get(ecodes.ABS_Z, 0)
+            right = triggers.get(ecodes.ABS_RZ, 0)
+            if left >= TRIGGER_THRESHOLD and right >= TRIGGER_THRESHOLD:
+                self._last_fired[path] = now
+                if self.on_button_press:
+                    await self.on_button_press(path, 0)
 
     async def _poll_buttons(self):
         """Poll all persistent device handles for button events."""
@@ -162,6 +269,10 @@ class EvdevMonitor:
 
         for path in stale:
             self._devices.pop(path, None)
+            self._held_buttons.pop(path, None)
+            self._trigger_values.pop(path, None)
+            self._has_analog_triggers.pop(path, None)
+            self._ignore_until.pop(path, None)
 
         if not fd_map:
             return
@@ -181,13 +292,32 @@ class EvdevMonitor:
             path, device = entry
 
             try:
+                combo_check_needed = False
                 for event in device.read():
-                    if event.type == ecodes.EV_KEY and event.value == 1:
-                        if event.code in (ecodes.BTN_START, ecodes.BTN_TR2):
-                            if self.on_button_press:
-                                await self.on_button_press(path, event.code)
+                    if event.type == ecodes.EV_KEY:
+                        held = self._held_buttons.setdefault(path, set())
+                        if event.value == 1:   # key down
+                            held.add(event.code)
+                            combo_check_needed = True
+                        elif event.value == 0:  # key up
+                            held.discard(event.code)
+                    elif event.type == ecodes.EV_ABS and event.code in (ecodes.ABS_Z, ecodes.ABS_RZ):
+                        axis_map = self._trigger_values.setdefault(path, {})
+                        prev = axis_map.get(event.code, 0)
+                        axis_map[event.code] = event.value
+                        # Only re-check when the axis crosses the activation threshold
+                        if event.value >= TRIGGER_THRESHOLD and prev < TRIGGER_THRESHOLD:
+                            combo_check_needed = True
+
+                if combo_check_needed:
+                    await self._check_combo(path)
+
             except OSError:
                 # Device was removed mid-read
                 self._devices.pop(path, None)
+                self._held_buttons.pop(path, None)
+                self._trigger_values.pop(path, None)
+                self._has_analog_triggers.pop(path, None)
+                self._ignore_until.pop(path, None)
             except Exception:
                 pass

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Bluetooth } from 'lucide-react'
 import { api } from '../lib/api'
 import type { BluetoothDevice } from '../types'
+import Button from './Button'
 
 interface RescanButtonProps {
   bluetoothDevices: BluetoothDevice[]
@@ -17,6 +18,7 @@ export default function RescanButton({
   const [scanning, setScanning] = useState(false)
   const [showDropdown, setShowDropdown] = useState(false)
   const [pairing, setPairing] = useState<string | null>(null)
+  const [contextMenu, setContextMenu] = useState<{ address: string; x: number; y: number } | null>(null)
 
   const isScanning = scanning || bluetoothScanning
 
@@ -49,9 +51,26 @@ export default function RescanButton({
     }
   }
 
+  const handleForcePair = async (address: string) => {
+    setContextMenu(null)
+    setPairing(address)
+    try {
+      await api.forcePairBluetoothDevice(address)
+    } catch {
+      // force pairing failed
+    } finally {
+      setPairing(null)
+    }
+  }
+
+  const handleContextMenu = (e: React.MouseEvent, address: string) => {
+    e.preventDefault()
+    setContextMenu({ address, x: e.clientX, y: e.clientY })
+  }
+
   return (
     <div className="relative">
-      <button
+      <Button
         onClick={handleScan}
         className={`flex items-center gap-1 px-3 py-1 text-xs rounded-md transition-colors ${
           isScanning
@@ -59,9 +78,31 @@ export default function RescanButton({
             : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
         }`}
       >
-        <Bluetooth size={14} />
+        <div className='flex flex-row text-xl gap-x-2 justify-center items-center -ml-2'>
+        <Bluetooth height={24} />
         {isScanning ? 'Scanning...' : 'Rescan'}
-      </button>
+        </div>
+      </Button>
+
+
+      {contextMenu && (
+        <div
+          className="fixed inset-0 z-50"
+          onClick={() => setContextMenu(null)}
+        >
+          <div
+            className="absolute bg-gray-800 border border-gray-600 rounded shadow-lg py-1"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+          >
+            <button
+              onClick={() => handleForcePair(contextMenu.address)}
+              className="w-full px-4 py-1.5 text-sm text-left hover:bg-gray-700 text-orange-400"
+            >
+              Force Pair
+            </button>
+          </div>
+        </div>
+      )}
 
       {showDropdown && bluetoothDevices.length > 0 && (
         <div className="absolute right-0 top-full mt-1 w-64 bg-gray-800 border border-gray-600 rounded-lg shadow-lg z-30 overflow-hidden">
@@ -78,6 +119,7 @@ export default function RescanButton({
             <div
               key={d.address}
               className="flex items-center justify-between px-3 py-2 hover:bg-gray-700"
+              onContextMenu={(e) => handleContextMenu(e, d.address)}
             >
               <div className="flex-1 min-w-0">
                 <p className="text-sm truncate">{d.name}</p>

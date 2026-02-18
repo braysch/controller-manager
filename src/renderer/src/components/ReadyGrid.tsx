@@ -12,7 +12,7 @@ export default function ReadyGrid({ controllers }: ReadyGridProps): JSX.Element 
 
   return (
     <div className="flex-1">
-      <div className="grid grid-cols-4 grid-rows-2 gap-3 h-full">
+      <div className="grid grid-cols-4 grid-rows-2 gap-y-3 gap-x-9 h-full">
         {slots.map((controller, index) => (
           <ReadySlot key={index} controller={controller} slotIndex={index} />
         ))}

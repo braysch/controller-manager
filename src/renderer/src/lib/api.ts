@@ -35,6 +35,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ address })
     }),
+  forcePairBluetoothDevice: (address: string) =>
+    request('/bluetooth/force-pair', {
+      method: 'POST',
+      body: JSON.stringify({ address })
+    }),
 
   getEmulators: () => request<unknown[]>('/emulators'),
   updateEmulator: (name: string, data: Record<string, unknown>) =>

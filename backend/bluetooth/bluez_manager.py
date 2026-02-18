@@ -57,7 +57,8 @@ class BlueZManager:
     def _is_controller(self, properties: dict) -> bool:
         """Check if a discovered device looks like a game controller."""
         name = str(properties.get("Name", properties.get("Alias", ""))).lower()
-        appearance = properties.get("Appearance", 0)
+        appearance_var = properties.get("Appearance")
+        appearance = appearance_var.unpack() if appearance_var is not None else 0
 
         if appearance in GAMEPAD_APPEARANCES:
             return True
@@ -67,7 +68,8 @@ class BlueZManager:
                 return True
 
         # Check device class - gamepads are in the Peripheral major class (0x0500)
-        device_class = properties.get("Class", 0)
+        class_var = properties.get("Class")
+        device_class = class_var.unpack() if class_var is not None else 0
         if device_class:
             major = (device_class >> 8) & 0x1F
             minor = (device_class >> 2) & 0x3F
@@ -183,26 +185,93 @@ class BlueZManager:
             except Exception:
                 pass
 
-    async def pair_device(self, address: str) -> bool:
-        """Pair and trust a Bluetooth device by address."""
+    def _find_device_path(self, address: str) -> Optional[str]:
+        """Return the D-Bus object path for a device by MAC address, or None."""
         try:
             bus = self._get_bus()
-            obj_manager = bus.get_proxy(
-                "org.bluez",
-                "/",
-                "org.freedesktop.DBus.ObjectManager"
-            )
+            obj_manager = bus.get_proxy("org.bluez", "/", "org.freedesktop.DBus.ObjectManager")
             objects = obj_manager.GetManagedObjects()
-
-            # Find the device object path
-            device_path = None
             for path, interfaces in objects.items():
                 if "org.bluez.Device1" not in interfaces:
                     continue
                 props = interfaces["org.bluez.Device1"]
-                if str(props.get("Address", "")) == address:
-                    device_path = str(path)
-                    break
+                if str(props.get("Address", "")).upper() == address.upper():
+                    return str(path)
+        except Exception as e:
+            print(f"[BlueZ] Error searching for device {address}: {e}")
+        return None
+
+    def _remove_device(self, device_path: str) -> bool:
+        """Remove a device object from BlueZ via the adapter."""
+        try:
+            adapter_path = self._get_adapter_path()
+            if not adapter_path:
+                return False
+            bus = self._get_bus()
+            adapter = bus.get_proxy("org.bluez", adapter_path, "org.bluez.Adapter1")
+            adapter.RemoveDevice(device_path)
+            print(f"[BlueZ] Removed device {device_path}")
+            return True
+        except Exception as e:
+            print(f"[BlueZ] Failed to remove device {device_path}: {e}")
+            return False
+
+    async def force_pair_device(self, address: str) -> bool:
+        """Remove the device from BlueZ then rediscover and pair from scratch."""
+        # Remove existing entry if BlueZ knows about it
+        existing_path = self._find_device_path(address)
+        if existing_path:
+            self._remove_device(existing_path)
+            await asyncio.sleep(0.5)
+
+        # Start discovery so BlueZ can rediscover the device
+        adapter_path = self._get_adapter_path()
+        if not adapter_path:
+            return False
+
+        bus = self._get_bus()
+        adapter = bus.get_proxy("org.bluez", adapter_path, "org.bluez.Adapter1")
+        try:
+            adapter.StartDiscovery()
+        except Exception:
+            pass
+
+        print(f"[BlueZ] Waiting for {address} to reappear for re-pairing...")
+
+        try:
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + 15.0
+            obj_manager = bus.get_proxy("org.bluez", "/", "org.freedesktop.DBus.ObjectManager")
+
+            while loop.time() < deadline:
+                await asyncio.sleep(1.0)
+                objects = obj_manager.GetManagedObjects()
+                for path, interfaces in objects.items():
+                    if "org.bluez.Device1" not in interfaces:
+                        continue
+                    props = interfaces["org.bluez.Device1"]
+                    if str(props.get("Address", "")).upper() == address.upper():
+                        print(f"[BlueZ] {address} reappeared, pairing...")
+                        try:
+                            adapter.StopDiscovery()
+                        except Exception:
+                            pass
+                        # _allow_force_retry=False prevents an infinite remove→rediscover loop
+                        return await self.pair_device(address, _allow_force_retry=False)
+
+            print(f"[BlueZ] Timeout: {address} did not reappear within 15 s")
+            return False
+        finally:
+            try:
+                adapter.StopDiscovery()
+            except Exception:
+                pass
+
+    async def pair_device(self, address: str, _allow_force_retry: bool = True) -> bool:
+        """Pair and trust a Bluetooth device by address."""
+        try:
+            bus = self._get_bus()
+            device_path = self._find_device_path(address)
 
             if not device_path:
                 print(f"[BlueZ] Device {address} not found")
@@ -211,15 +280,28 @@ class BlueZManager:
             device = bus.get_proxy("org.bluez", device_path, "org.bluez.Device1")
 
             # Trust the device
-            props = bus.get_proxy("org.bluez", device_path, "org.freedesktop.DBus.Properties")
-            props.Set("org.bluez.Device1", "Trusted", get_variant(Bool, True))
+            dbus_props = bus.get_proxy("org.bluez", device_path, "org.freedesktop.DBus.Properties")
+            dbus_props.Set("org.bluez.Device1", "Trusted", get_variant(Bool, True))
 
             # Pair if not already paired
             try:
                 device.Pair()
             except Exception as e:
                 error_name = getattr(e, "get_dbus_name", lambda: "")()
-                if "AlreadyExists" not in str(error_name) and "AlreadyExists" not in str(e):
+                is_already_exists = "AlreadyExists" in str(error_name) or "AlreadyExists" in str(e)
+                if is_already_exists:
+                    # Check whether BlueZ considers the device actually connected
+                    try:
+                        connected_var = dbus_props.Get("org.bluez.Device1", "Connected")
+                        connected = connected_var.unpack() if hasattr(connected_var, "unpack") else bool(connected_var)
+                    except Exception:
+                        connected = False
+
+                    if not connected and _allow_force_retry:
+                        print(f"[BlueZ] {address} AlreadyExists but not connected — removing and retrying...")
+                        return await self.force_pair_device(address)
+                    # Already paired and connected, or retry disabled — fall through to Connect
+                else:
                     raise
 
             # Connect
