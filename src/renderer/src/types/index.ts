@@ -46,6 +46,7 @@ export type WSEvent =
   | { type: 'controller_ready'; data: ReadyController & { snd_src: string } }
   | { type: 'controller_unready'; data: { unique_id: string } }
   | { type: 'battery_update'; data: { unique_id: string; battery_percent: number } }
+  | { type: 'bluetooth_scan_started'; data: Record<string, never> }
   | { type: 'bluetooth_device_found'; data: { name: string; address: string } }
   | { type: 'bluetooth_scan_complete'; data: Record<string, never> }
   | { type: 'state_snapshot'; data: { connected: Controller[]; ready: ReadyController[] } }

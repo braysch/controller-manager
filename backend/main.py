@@ -233,6 +233,7 @@ async def start_bluetooth_scan():
         await ws_manager.broadcast("bluetooth_scan_complete", {})
 
     await bluez_manager.start_scan(on_device_found, on_scan_complete)
+    await ws_manager.broadcast("bluetooth_scan_started", {})
     return {"status": "scanning"}
 
 

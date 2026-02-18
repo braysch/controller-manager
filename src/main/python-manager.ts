@@ -1,11 +1,22 @@
-import { ChildProcess, spawn } from 'child_process'
+import { ChildProcess, spawn, execSync } from 'child_process'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 
 export class PythonManager {
   private process: ChildProcess | null = null
 
+  private killPort(): void {
+    try {
+      execSync('fuser -k 8000/tcp', { stdio: 'ignore' })
+    } catch {
+      // fuser unavailable or nothing on that port — ignore
+    }
+  }
+
   start(): void {
+    // Clear any leftover process from a previous run before starting
+    this.killPort()
+
     const backendDir = is.dev
       ? join(__dirname, '../../backend')
       : join(process.resourcesPath, 'backend')
@@ -50,8 +61,15 @@ export class PythonManager {
   stop(): void {
     if (this.process) {
       console.log('[PythonManager] Stopping Python backend')
-      this.process.kill('SIGTERM')
+      const proc = this.process
       this.process = null
+      proc.kill('SIGTERM')
+      // Fallback: if still alive after 3 s, force-kill it
+      setTimeout(() => {
+        try { proc.kill('SIGKILL') } catch { /* already gone */ }
+      }, 3000)
     }
+    // Belt-and-suspenders: free the port regardless
+    this.killPort()
   }
 }

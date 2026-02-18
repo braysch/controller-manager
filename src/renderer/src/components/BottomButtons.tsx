@@ -16,7 +16,7 @@ export default function BottomButtons({
   return (
     <div className="flex items-center justify-center px-4 py-3 bg-gray-800 border-t border-gray-700">
       <div className="flex flex-1 w-full">
-        <Button onClick={onBack}>Back</Button>
+        <Button onClick={onBack}>Exit</Button>
       </div>
 
       <div className='text-xl px-8 w-full flex justify-center flex-1'>

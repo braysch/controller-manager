@@ -19,7 +19,7 @@ export default function ConnectedArea({
       <div className="flex items-center gap-3">
         <div className="flex items-center gap-2 flex-1 min-h-[3rem] px-2">
           {controllers.length === 0 ? (
-            <p className="text-gray-500 text-sm italic">No controllers connected</p>
+            <p className="text-gray-500 text-sm italic">No controllers available</p>
           ) : (
             controllers.map((c) => (
               <img

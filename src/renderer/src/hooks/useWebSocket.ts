@@ -65,12 +65,14 @@ export function useWebSocket(
               battery_percent: msg.data.battery_percent
             })
             break
+          case 'bluetooth_scan_started':
+            setBluetoothScanning(true)
+            break
           case 'bluetooth_device_found':
             setBluetoothDevices((prev) => {
               if (prev.some((d) => d.address === msg.data.address)) return prev
               return [...prev, { name: msg.data.name, address: msg.data.address }]
             })
-            setBluetoothScanning(true)
             break
           case 'bluetooth_scan_complete':
             setBluetoothScanning(false)

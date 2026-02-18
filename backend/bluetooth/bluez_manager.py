@@ -104,6 +104,12 @@ class BlueZManager:
             bus = self._get_bus()
             adapter = bus.get_proxy("org.bluez", adapter_path, "org.bluez.Adapter1")
 
+            # Reset any leftover discovery session (e.g. from a previous crash)
+            try:
+                adapter.StopDiscovery()
+            except Exception:
+                pass
+
             # Start discovery
             try:
                 adapter.StartDiscovery()
