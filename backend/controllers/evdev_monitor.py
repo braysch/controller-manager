@@ -9,7 +9,8 @@ from typing import Callable, Optional
 
 from evdev import InputDevice, ecodes, list_devices
 
-# Fraction of an axis's maximum value that counts as "pressed" for combo detection
+# Fraction of an axis's maximum value that both triggers must reach to fire the combo.
+# e.g. 0.5 means each trigger must be pressed at least halfway (512/1023 for Xbox).
 TRIGGER_THRESHOLD_FRACTION = 0.5
 # Seconds before the same device can fire the combo again
 COMBO_COOLDOWN = 1.5
@@ -204,23 +205,40 @@ class EvdevMonitor:
 
     @staticmethod
     def _detect_analog_triggers(device: InputDevice) -> Optional[dict[int, int]]:
-        """Return {axis_code: max_value} for all real analog trigger axes on this device, else None.
+        """Return {left_axis: max, right_axis: max} for the best real analog trigger pair,
+        or None if no usable pair is found.
 
-        Checks both ABS_Z/ABS_RZ (DS4, Switch Pro, xpadneo) and ABS_BRAKE/ABS_GAS
-        (Xbox via hid-xbox/xpad).  Real triggers always have min == 0; IMU/gyro axes
-        have negative minimums (e.g. -32767).  Requires at least two qualifying axes
-        to form a usable left+right combo.
+        Some controllers expose multiple trigger axis pairs simultaneously (e.g. Xbox reports
+        both ABS_Z/ABS_RZ and ABS_GAS/ABS_BRAKE).  Collecting all of them and requiring
+        every one to be above threshold breaks detection because the unused pair never
+        updates.  Instead we pick exactly one pair in priority order:
+          1. ABS_GAS / ABS_BRAKE  (Xbox via hid-xbox, 0-1023)
+          2. ABS_Z  / ABS_RZ     (DS4, Switch Pro, xpadneo)
+
+        A pair qualifies only when both axes have min == 0 and max > 0 (real triggers).
+        IMU/gyro axes always have a negative minimum and are excluded.
         """
         try:
             caps = device.capabilities()
             abs_axes = dict(caps.get(ecodes.EV_ABS, []))
-            result = {}
-            for axis in (ecodes.ABS_Z, ecodes.ABS_RZ, ecodes.ABS_BRAKE, ecodes.ABS_GAS):
-                if axis in abs_axes:
-                    info = abs_axes[axis]
-                    if info.min >= 0:
-                        result[axis] = max(info.max, 1)
-            return result if len(result) >= 2 else None
+
+            def real_trigger_max(axis: int) -> Optional[int]:
+                """Return the axis max if it looks like a real trigger, else None."""
+                if axis not in abs_axes:
+                    return None
+                info = abs_axes[axis]
+                return info.max if info.min >= 0 and info.max > 0 else None
+
+            for left, right in (
+                (ecodes.ABS_GAS, ecodes.ABS_BRAKE),
+                (ecodes.ABS_Z,   ecodes.ABS_RZ),
+            ):
+                l_max = real_trigger_max(left)
+                r_max = real_trigger_max(right)
+                if l_max is not None and r_max is not None:
+                    return {left: l_max, right: r_max}
+
+            return None
         except Exception:
             return None
 
