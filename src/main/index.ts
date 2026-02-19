@@ -64,6 +64,11 @@ app.whenReady().then(() => {
 
   ipcMain.handle('get-launch-paths', () => getLaunchPaths())
 
+  ipcMain.on('quit-and-launch', () => {
+    fs.writeFileSync('/tmp/controller-manager-launch', '')
+    app.quit()
+  })
+
   pythonManager = new PythonManager()
   pythonManager.start()
 
