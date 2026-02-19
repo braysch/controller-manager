@@ -273,6 +273,86 @@ class BlueZManager:
             except Exception:
                 pass
 
+    async def disconnect_device(self, address: str) -> bool:
+        """Disconnect a single Bluetooth device by MAC address."""
+        try:
+            bus = self._get_bus()
+            device_path = self._find_device_path(address)
+            if not device_path:
+                print(f"[BlueZ] Device {address} not found")
+                return False
+            device = bus.get_proxy("org.bluez", device_path, "org.bluez.Device1")
+            device.Disconnect()
+            print(f"[BlueZ] Disconnected: {address}")
+            return True
+        except Exception as e:
+            print(f"[BlueZ] Failed to disconnect {address}: {e}")
+            return False
+
+    async def remove_device(self, address: str) -> bool:
+        """Remove a single Bluetooth device by MAC address."""
+        device_path = self._find_device_path(address)
+        if not device_path:
+            print(f"[BlueZ] Device {address} not found for removal")
+            return False
+        return self._remove_device(device_path)
+
+    async def disconnect_all_controllers(self) -> int:
+        """Disconnect all currently connected Bluetooth devices."""
+        try:
+            bus = self._get_bus()
+            obj_manager = bus.get_proxy("org.bluez", "/", "org.freedesktop.DBus.ObjectManager")
+            objects = obj_manager.GetManagedObjects()
+            count = 0
+            for path, interfaces in objects.items():
+                if "org.bluez.Device1" not in interfaces:
+                    continue
+                props = interfaces["org.bluez.Device1"]
+                try:
+                    connected_var = props.get("Connected")
+                    connected = bool(connected_var.unpack()) if hasattr(connected_var, "unpack") else bool(connected_var)
+                except Exception:
+                    continue
+                if not connected:
+                    continue
+                try:
+                    device = bus.get_proxy("org.bluez", str(path), "org.bluez.Device1")
+                    device.Disconnect()
+                    count += 1
+                    print(f"[BlueZ] Disconnected {path}")
+                except Exception as e:
+                    print(f"[BlueZ] Failed to disconnect {path}: {e}")
+            print(f"[BlueZ] Disconnected {count} device(s)")
+            return count
+        except Exception as e:
+            print(f"[BlueZ] disconnect_all_controllers error: {e}")
+            return 0
+
+    async def remove_all_controllers(self) -> int:
+        """Remove all paired Bluetooth devices from BlueZ."""
+        try:
+            bus = self._get_bus()
+            obj_manager = bus.get_proxy("org.bluez", "/", "org.freedesktop.DBus.ObjectManager")
+            objects = obj_manager.GetManagedObjects()
+            to_remove = []
+            for path, interfaces in objects.items():
+                if "org.bluez.Device1" not in interfaces:
+                    continue
+                props = interfaces["org.bluez.Device1"]
+                try:
+                    paired_var = props.get("Paired")
+                    paired = bool(paired_var.unpack()) if hasattr(paired_var, "unpack") else bool(paired_var)
+                except Exception:
+                    continue
+                if paired:
+                    to_remove.append(str(path))
+            count = sum(1 for p in to_remove if self._remove_device(p))
+            print(f"[BlueZ] Removed {count} device(s)")
+            return count
+        except Exception as e:
+            print(f"[BlueZ] remove_all_controllers error: {e}")
+            return 0
+
     async def pair_device(self, address: str, _allow_force_retry: bool = True) -> bool:
         """Pair and trust a Bluetooth device by address."""
         try:
