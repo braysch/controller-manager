@@ -14,7 +14,12 @@ async def monitor_device(dev: InputDevice):
                 code_name = ecodes.BTN.get(event.code) or ecodes.KEY.get(event.code) or str(event.code)
                 if isinstance(code_name, list):
                     code_name = code_name[0]
-                print(f"[{dev.name}]  {code_name} ({event.code})  {state}")
+                print(f"[{dev.name}]  KEY  {code_name} ({event.code})  {state}")
+            elif event.type == ecodes.EV_ABS:
+                code_name = ecodes.ABS.get(event.code) or str(event.code)
+                if isinstance(code_name, list):
+                    code_name = code_name[0]
+                print(f"[{dev.name}]  ABS  {code_name} ({event.code})  value={event.value}")
     except OSError:
         print(f"[{dev.name}] disconnected")
 

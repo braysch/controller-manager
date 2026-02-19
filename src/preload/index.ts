@@ -1,7 +1,9 @@
-import { contextBridge } from 'electron'
+import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 
-const api = {}
+const api = {
+  quitAndLaunch: () => ipcRenderer.send('quit-and-launch')
+}
 
 if (process.contextIsolated) {
   try {

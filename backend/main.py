@@ -255,12 +255,32 @@ async def pair_bluetooth_device(req: PairRequest):
     return {"error": "Pairing failed", "address": req.address}
 
 
-@app.post("/api/bluetooth/force-pair")
-async def force_pair_bluetooth_device(req: PairRequest):
-    success = await bluez_manager.force_pair_device(req.address)
+@app.post("/api/bluetooth/disconnect")
+async def disconnect_bluetooth_device(req: PairRequest):
+    success = await bluez_manager.disconnect_device(req.address)
     if success:
-        return {"status": "paired", "address": req.address}
-    return {"error": "Force pairing failed", "address": req.address}
+        return {"status": "disconnected", "address": req.address}
+    return {"error": "Device not found or disconnect failed", "address": req.address}
+
+
+@app.post("/api/bluetooth/remove")
+async def remove_bluetooth_device(req: PairRequest):
+    success = await bluez_manager.remove_device(req.address)
+    if success:
+        return {"status": "removed", "address": req.address}
+    return {"error": "Device not found or removal failed", "address": req.address}
+
+
+@app.post("/api/controllers/disconnect-all")
+async def disconnect_all_controllers():
+    count = await bluez_manager.disconnect_all_controllers()
+    return {"disconnected": count}
+
+
+@app.post("/api/controllers/remove-all")
+async def remove_all_controllers():
+    count = await bluez_manager.remove_all_controllers()
+    return {"removed": count}
 
 
 # --- Emulator endpoints ---

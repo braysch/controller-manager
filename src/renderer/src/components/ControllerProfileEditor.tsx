@@ -2,7 +2,11 @@ import { useState, useEffect } from 'react'
 import { api } from '../lib/api'
 import type { ControllerProfile } from '../types'
 
-export default function ControllerProfileEditor(): JSX.Element {
+interface ControllerProfileEditorProps {
+  open: boolean
+}
+
+export default function ControllerProfileEditor({ open }: ControllerProfileEditorProps): JSX.Element {
   const [profiles, setProfiles] = useState<ControllerProfile[]>([])
   const [images, setImages] = useState<string[]>([])
   const [sounds, setSounds] = useState<string[]>([])
@@ -13,10 +17,11 @@ export default function ControllerProfileEditor(): JSX.Element {
   const [editGuid, setEditGuid] = useState('')
 
   useEffect(() => {
+    if (!open) return
     api.getProfiles().then((p) => setProfiles(p as ControllerProfile[])).catch(console.error)
     api.getImages().then(setImages).catch(console.error)
     api.getSounds().then(setSounds).catch(console.error)
-  }, [])
+  }, [open])
 
   const startEdit = (profile: ControllerProfile) => {
     setEditing(profile.unique_id)

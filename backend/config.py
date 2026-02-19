@@ -7,7 +7,12 @@ BACKEND_DIR = Path(__file__).parent
 ASSETS_DIR = PROJECT_ROOT / "assets"
 IMAGES_DIR = ASSETS_DIR / "images"
 SOUNDS_DIR = ASSETS_DIR / "sounds"
-DB_PATH = PROJECT_ROOT / "controllers.db"
+
+# DB lives in a writable user data dir (set by Electron in production,
+# falls back to project root in dev).
+_data_dir = Path(os.environ.get('CONTROLLER_MANAGER_DATA_DIR', PROJECT_ROOT))
+_data_dir.mkdir(parents=True, exist_ok=True)
+DB_PATH = _data_dir / "controllers.db"
 
 # Default emulator config paths
 DEFAULT_YUZU_CONFIG = os.path.expanduser(

@@ -9,8 +9,8 @@ from typing import Callable, Optional
 
 from evdev import InputDevice, ecodes, list_devices
 
-# Analog trigger activation threshold (axes range 0-255)
-TRIGGER_THRESHOLD = 128
+# Fraction of an axis's maximum value that counts as "pressed" for combo detection
+TRIGGER_THRESHOLD_FRACTION = 0.5
 # Seconds before the same device can fire the combo again
 COMBO_COOLDOWN = 1.5
 
@@ -41,8 +41,9 @@ class EvdevMonitor:
         self._trigger_values: dict[str, dict[int, int]] = {}
         # monotonic timestamp of last combo fire per device (for cooldown)
         self._last_fired: dict[str, float] = {}
-        # Whether a device has real analog triggers (not IMU/gyro axes)
-        self._has_analog_triggers: dict[str, bool] = {}
+        # Per-device analog trigger axis maxima: path -> {axis_code: max_val}
+        # Empty dict means the device has no real analog triggers.
+        self._trigger_max: dict[str, dict[int, int]] = {}
         # Ignore combo events until this monotonic time (skips init state sync)
         self._ignore_until: dict[str, float] = {}
 
@@ -153,7 +154,7 @@ class EvdevMonitor:
                         self._held_buttons[path] = set()
                         self._trigger_values[path] = {}
                         self._ignore_until[path] = time.monotonic() + 1.0
-                        self._has_analog_triggers[path] = self._detect_analog_triggers(device)
+                        self._trigger_max[path] = self._detect_analog_triggers(device) or {}
 
                         if self.on_connected:
                             await self.on_connected(info)
@@ -170,7 +171,7 @@ class EvdevMonitor:
                     self._held_buttons.pop(path, None)
                     self._trigger_values.pop(path, None)
                     self._last_fired.pop(path, None)
-                    self._has_analog_triggers.pop(path, None)
+                    self._trigger_max.pop(path, None)
                     self._ignore_until.pop(path, None)
                     if self.on_disconnected:
                         await self.on_disconnected(path)
@@ -202,27 +203,28 @@ class EvdevMonitor:
             return False
 
     @staticmethod
-    def _detect_analog_triggers(device: InputDevice) -> bool:
-        """Return True only if the device has real analog trigger axes.
+    def _detect_analog_triggers(device: InputDevice) -> Optional[dict[int, int]]:
+        """Return {ABS_Z: max, ABS_RZ: max} if the device has real analog trigger axes, else None.
 
-        Joy-Cons (and other IMU-equipped controllers) expose ABS_Z / ABS_RZ for
-        gyroscope or accelerometer data with ranges like ±32767.  Real analog
-        triggers use a 0-255 (or similar small) range.  We treat anything with
-        max > 512 as IMU data and exclude it from trigger detection.
+        The only reliable way to distinguish real triggers from Joy-Con / IMU axes
+        that also use ABS_Z / ABS_RZ is the minimum value:
+          - Real triggers always start at 0 (min == 0), regardless of driver.
+            Range varies widely: 0-255 (DS4/Switch Pro), 0-1023 (Xbox via xpad/hid-xbox),
+            0-32767 (Xbox via xpadneo).
+          - IMU / gyroscope axes always have a negative minimum (e.g. -32767).
         """
         try:
             caps = device.capabilities()
             abs_axes = dict(caps.get(ecodes.EV_ABS, []))
             if ecodes.ABS_Z not in abs_axes or ecodes.ABS_RZ not in abs_axes:
-                return False
+                return None
             z_info = abs_axes[ecodes.ABS_Z]
             rz_info = abs_axes[ecodes.ABS_RZ]
-            return (
-                z_info.min >= 0 and z_info.max <= 512 and
-                rz_info.min >= 0 and rz_info.max <= 512
-            )
+            if z_info.min >= 0 and rz_info.min >= 0:
+                return {ecodes.ABS_Z: max(z_info.max, 1), ecodes.ABS_RZ: max(rz_info.max, 1)}
+            return None
         except Exception:
-            return False
+            return None
 
     async def _check_combo(self, path: str):
         """Fire on_button_press if the current held state matches any combo."""
@@ -245,10 +247,13 @@ class EvdevMonitor:
                 return
 
         # Check analog triggers only for devices with real trigger axes
-        if self._has_analog_triggers.get(path, False):
+        trigger_max = self._trigger_max.get(path)
+        if trigger_max:
             left = triggers.get(ecodes.ABS_Z, 0)
             right = triggers.get(ecodes.ABS_RZ, 0)
-            if left >= TRIGGER_THRESHOLD and right >= TRIGGER_THRESHOLD:
+            left_thresh = trigger_max[ecodes.ABS_Z] * TRIGGER_THRESHOLD_FRACTION
+            right_thresh = trigger_max[ecodes.ABS_RZ] * TRIGGER_THRESHOLD_FRACTION
+            if left >= left_thresh and right >= right_thresh:
                 self._last_fired[path] = now
                 if self.on_button_press:
                     await self.on_button_press(path, 0)
@@ -271,7 +276,7 @@ class EvdevMonitor:
             self._devices.pop(path, None)
             self._held_buttons.pop(path, None)
             self._trigger_values.pop(path, None)
-            self._has_analog_triggers.pop(path, None)
+            self._trigger_max.pop(path, None)
             self._ignore_until.pop(path, None)
 
         if not fd_map:
@@ -305,8 +310,10 @@ class EvdevMonitor:
                         axis_map = self._trigger_values.setdefault(path, {})
                         prev = axis_map.get(event.code, 0)
                         axis_map[event.code] = event.value
-                        # Only re-check when the axis crosses the activation threshold
-                        if event.value >= TRIGGER_THRESHOLD and prev < TRIGGER_THRESHOLD:
+                        # Only re-check when the axis crosses the per-device activation threshold
+                        axis_max = self._trigger_max.get(path, {}).get(event.code, 255)
+                        threshold = axis_max * TRIGGER_THRESHOLD_FRACTION
+                        if event.value >= threshold and prev < threshold:
                             combo_check_needed = True
 
                 if combo_check_needed:
@@ -317,7 +324,7 @@ class EvdevMonitor:
                 self._devices.pop(path, None)
                 self._held_buttons.pop(path, None)
                 self._trigger_values.pop(path, None)
-                self._has_analog_triggers.pop(path, None)
+                self._trigger_max.pop(path, None)
                 self._ignore_until.pop(path, None)
             except Exception:
                 pass

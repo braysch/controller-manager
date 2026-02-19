@@ -33,7 +33,7 @@ export default function SettingsPanel({ open, onClose }: SettingsPanelProps): JS
 
         <div className="overflow-y-auto h-[calc(100%-4rem)] p-4 space-y-6">
           <EmulatorPathConfig />
-          <ControllerProfileEditor />
+          <ControllerProfileEditor open={open} />
         </div>
       </div>
     </>

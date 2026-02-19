@@ -18,9 +18,15 @@ export default function RescanButton({
   const [scanning, setScanning] = useState(false)
   const [showDropdown, setShowDropdown] = useState(false)
   const [pairing, setPairing] = useState<string | null>(null)
+  const [disconnecting, setDisconnecting] = useState<string | null>(null)
+  const [removing, setRemoving] = useState<string | null>(null)
+  const [removedAddresses, setRemovedAddresses] = useState<Set<string>>(new Set())
+  const [disconnectingAll, setDisconnectingAll] = useState(false)
+  const [removingAll, setRemovingAll] = useState(false)
   const [contextMenu, setContextMenu] = useState<{ address: string; x: number; y: number } | null>(null)
 
   const isScanning = scanning || bluetoothScanning
+  const visibleDevices = bluetoothDevices.filter((d) => !removedAddresses.has(d.address))
 
   const handleScan = async () => {
     if (isScanning) {
@@ -28,6 +34,7 @@ export default function RescanButton({
       setScanning(false)
     } else {
       onClearDevices()
+      setRemovedAddresses(new Set())
       setScanning(true)
       setShowDropdown(true)
       try {
@@ -51,15 +58,52 @@ export default function RescanButton({
     }
   }
 
-  const handleForcePair = async (address: string) => {
+  const handleDisconnect = async (address: string) => {
     setContextMenu(null)
-    setPairing(address)
+    setDisconnecting(address)
     try {
-      await api.forcePairBluetoothDevice(address)
+      await api.disconnectBluetoothDevice(address)
     } catch {
-      // force pairing failed
+      // disconnect failed
     } finally {
-      setPairing(null)
+      setDisconnecting(null)
+    }
+  }
+
+  const handleRemove = async (address: string) => {
+    setContextMenu(null)
+    setRemoving(address)
+    try {
+      await api.removeBluetoothDevice(address)
+      setRemovedAddresses((prev) => new Set(prev).add(address))
+    } catch {
+      // removal failed
+    } finally {
+      setRemoving(null)
+    }
+  }
+
+  const handleDisconnectAll = async () => {
+    setDisconnectingAll(true)
+    try {
+      await api.disconnectAllControllers()
+    } catch {
+      // disconnect all failed
+    } finally {
+      setDisconnectingAll(false)
+    }
+  }
+
+  const handleRemoveAll = async () => {
+    setRemovingAll(true)
+    try {
+      await api.removeAllControllers()
+      onClearDevices()
+      setRemovedAddresses(new Set())
+    } catch {
+      // remove all failed
+    } finally {
+      setRemovingAll(false)
     }
   }
 
@@ -69,21 +113,83 @@ export default function RescanButton({
   }
 
   return (
-    <div className="relative">
+    <div className="flex items-center gap-2">
+      <div className="relative">
+        <Button
+          onClick={handleScan}
+          className={`flex items-center gap-1 px-3 py-1 text-xs rounded-md transition-colors ${
+            isScanning
+              ? 'bg-blue-600 text-white animate-pulse'
+              : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+          }`}
+        >
+          <div className='flex flex-row text-xl gap-x-2 justify-center items-center -ml-2'>
+            <Bluetooth height={24} />
+            {isScanning ? 'Scanning...' : 'Rescan'}
+          </div>
+        </Button>
+
+        {showDropdown && (isScanning || visibleDevices.length > 0) && (
+          <div className="absolute right-0 top-full mt-1 w-64 bg-gray-800 border border-gray-600 rounded-lg shadow-lg z-30 overflow-hidden">
+            <div className="p-2 border-b border-gray-700 flex items-center justify-between">
+              <span className="text-xs text-gray-400">
+                {isScanning ? 'Scanning...' : 'Found Devices'}
+              </span>
+              <button
+                onClick={() => setShowDropdown(false)}
+                className="text-xs text-gray-500 hover:text-gray-300"
+              >
+                Close
+              </button>
+            </div>
+            {visibleDevices.length === 0 ? (
+              <p className="px-3 py-4 text-xs text-gray-500 text-center italic">
+                Searching for controllers...
+              </p>
+            ) : (
+              visibleDevices.map((d) => (
+                <div
+                  key={d.address}
+                  className="flex items-center justify-between px-3 py-2 hover:bg-gray-700"
+                  onContextMenu={(e) => handleContextMenu(e, d.address)}
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm truncate">{d.name}</p>
+                    <p className="text-[10px] text-gray-500">{d.address}</p>
+                  </div>
+                  <button
+                    onClick={() => handlePair(d.address)}
+                    disabled={pairing === d.address || removing === d.address || disconnecting === d.address}
+                    className="ml-2 px-2 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {pairing === d.address ? 'Pairing...' : 'Pair'}
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+
       <Button
-        onClick={handleScan}
-        className={`flex items-center gap-1 px-3 py-1 text-xs rounded-md transition-colors ${
-          isScanning
-            ? 'bg-blue-600 text-white animate-pulse'
-            : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-        }`}
+        onClick={handleDisconnectAll}
+        disabled={disconnectingAll}
+        className="flex items-center gap-1 px-3 py-1 text-xs rounded-md transition-colors bg-gray-700 hover:bg-gray-600 text-gray-300"
       >
-        <div className='flex flex-row text-xl gap-x-2 justify-center items-center -ml-2'>
-        <Bluetooth height={24} />
-        {isScanning ? 'Scanning...' : 'Rescan'}
+        <div className='flex flex-row text-xl gap-x-2 justify-center items-center'>
+          {disconnectingAll ? 'Disconnecting...' : 'Disconnect All'}
         </div>
       </Button>
 
+      <Button
+        onClick={handleRemoveAll}
+        disabled={removingAll}
+        className="flex items-center gap-1 px-3 py-1 text-xs rounded-md transition-colors bg-gray-700 hover:bg-gray-600 text-gray-300"
+      >
+        <div className='flex flex-row text-xl gap-x-2 justify-center items-center'>
+          {removingAll ? 'Removing...' : 'Remove All'}
+        </div>
+      </Button>
 
       {contextMenu && (
         <div
@@ -95,53 +201,18 @@ export default function RescanButton({
             style={{ left: contextMenu.x, top: contextMenu.y }}
           >
             <button
-              onClick={() => handleForcePair(contextMenu.address)}
-              className="w-full px-4 py-1.5 text-sm text-left hover:bg-gray-700 text-orange-400"
+              onClick={() => handleDisconnect(contextMenu.address)}
+              className="w-full px-4 py-1.5 text-sm text-left hover:bg-gray-700 text-yellow-400"
             >
-              Force Pair
+              {disconnecting === contextMenu.address ? 'Disconnecting...' : 'Disconnect'}
             </button>
-          </div>
-        </div>
-      )}
-
-      {showDropdown && (isScanning || bluetoothDevices.length > 0) && (
-        <div className="absolute right-0 top-full mt-1 w-64 bg-gray-800 border border-gray-600 rounded-lg shadow-lg z-30 overflow-hidden">
-          <div className="p-2 border-b border-gray-700 flex items-center justify-between">
-            <span className="text-xs text-gray-400">
-              {isScanning ? 'Scanning...' : 'Found Devices'}
-            </span>
             <button
-              onClick={() => setShowDropdown(false)}
-              className="text-xs text-gray-500 hover:text-gray-300"
+              onClick={() => handleRemove(contextMenu.address)}
+              className="w-full px-4 py-1.5 text-sm text-left hover:bg-gray-700 text-red-400"
             >
-              Close
+              {removing === contextMenu.address ? 'Removing...' : 'Remove'}
             </button>
           </div>
-          {bluetoothDevices.length === 0 ? (
-            <p className="px-3 py-4 text-xs text-gray-500 text-center italic">
-              Searching for controllers...
-            </p>
-          ) : (
-            bluetoothDevices.map((d) => (
-              <div
-                key={d.address}
-                className="flex items-center justify-between px-3 py-2 hover:bg-gray-700"
-                onContextMenu={(e) => handleContextMenu(e, d.address)}
-              >
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm truncate">{d.name}</p>
-                  <p className="text-[10px] text-gray-500">{d.address}</p>
-                </div>
-                <button
-                  onClick={() => handlePair(d.address)}
-                  disabled={pairing === d.address}
-                  className="ml-2 px-2 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {pairing === d.address ? 'Pairing...' : 'Pair'}
-                </button>
-              </div>
-            ))
-          )}
         </div>
       )}
     </div>

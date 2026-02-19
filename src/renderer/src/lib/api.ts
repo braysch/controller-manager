@@ -35,11 +35,18 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ address })
     }),
-  forcePairBluetoothDevice: (address: string) =>
-    request('/bluetooth/force-pair', {
+  disconnectBluetoothDevice: (address: string) =>
+    request('/bluetooth/disconnect', {
       method: 'POST',
       body: JSON.stringify({ address })
     }),
+  removeBluetoothDevice: (address: string) =>
+    request('/bluetooth/remove', {
+      method: 'POST',
+      body: JSON.stringify({ address })
+    }),
+  disconnectAllControllers: () => request('/controllers/disconnect-all', { method: 'POST' }),
+  removeAllControllers: () => request('/controllers/remove-all', { method: 'POST' }),
 
   getEmulators: () => request<unknown[]>('/emulators'),
   updateEmulator: (name: string, data: Record<string, unknown>) =>

@@ -77,7 +77,9 @@ export function useControllers() {
         return
       }
       if (action.type === 'APPLY_CONFIG') {
-        api.applyConfig().catch(console.error)
+        api.applyConfig()
+          .then(() => window.api.quitAndLaunch())
+          .catch(console.error)
         return
       }
       rawDispatch(action)

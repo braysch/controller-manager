@@ -21,8 +21,8 @@ export default function BottomButtons({
 
       <div className='text-xl px-8 w-full flex justify-center flex-1'>
         <div className='flex justify-center gap-x-4 h-[75px]'>
-          <img className='h-full' src='file:///home/brayschway/Server Media/Games/Video Games/Stardew Valley/logo.png' alt='Game Logo'></img>
-          <img className='h-full' src='file:///home/brayschway/Server Media/Games/Emulators/Yuzu/logo.png' alt='Yuzu Logo'></img>
+          <img className='h-full' src='local:///home/brayschway/Server Media/Games/Video Games/Stardew Valley/logo.png' alt='Game Logo'></img>
+          <img className='h-full' src='local:///home/brayschway/Server Media/Games/Emulators/Yuzu/logo.png' alt='Yuzu Logo'></img>
         </div>
       </div>
 

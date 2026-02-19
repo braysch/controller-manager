@@ -1,5 +1,6 @@
 import { ChildProcess, spawn, execSync } from 'child_process'
 import { join } from 'path'
+import { app } from 'electron'
 import { is } from '@electron-toolkit/utils'
 
 export class PythonManager {
@@ -37,7 +38,7 @@ export class PythonManager {
       {
         cwd: backendDir,
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env, PYTHONUNBUFFERED: '1' }
+        env: { ...process.env, PYTHONUNBUFFERED: '1', CONTROLLER_MANAGER_DATA_DIR: app.getPath('userData') }
       }
     )
 
