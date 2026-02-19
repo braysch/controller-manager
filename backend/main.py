@@ -96,6 +96,11 @@ async def on_input(device_path: str):
         await ws_manager.broadcast("controller_input", {"unique_id": unique_id})
 
 
+async def on_start_pressed(device_path: str):
+    """Called by evdev_monitor when the Start button is pressed."""
+    await ws_manager.broadcast("start_pressed", {})
+
+
 async def on_battery_update(device_path: str, percent: int):
     """Called by battery_monitor on change."""
     unique_id = state_manager.get_unique_id_for_path(device_path)
@@ -115,6 +120,7 @@ async def lifespan(app: FastAPI):
     evdev_monitor.on_disconnected = on_controller_disconnected
     evdev_monitor.on_button_press = on_button_press
     evdev_monitor.on_input = on_input
+    evdev_monitor.on_start_pressed = on_start_pressed
     battery_monitor.on_update = on_battery_update
 
     monitor_task = asyncio.create_task(evdev_monitor.run())

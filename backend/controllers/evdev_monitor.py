@@ -44,6 +44,7 @@ class EvdevMonitor:
         self.on_disconnected: Optional[Callable] = None  # async callback(device_path: str)
         self.on_button_press: Optional[Callable] = None  # async callback(device_path: str, button_code: int)
         self.on_input: Optional[Callable] = None  # async callback(device_path: str)
+        self.on_start_pressed: Optional[Callable] = None  # async callback(device_path: str)
         self._running = False
         self._known_paths: set[str] = set()
         # Persistent device handles for button polling (path -> InputDevice)
@@ -358,6 +359,8 @@ class EvdevMonitor:
                             self._button_press_time.setdefault(path, {})[event.code] = time.monotonic()
                             if self.on_input:
                                 await self.on_input(path)
+                            if event.code == ecodes.BTN_START and self.on_start_pressed:
+                                await self.on_start_pressed(path)
                         elif event.value == 0:  # key up
                             held.discard(event.code)
                         if event.code in _BUMPER_TRIGGER_BTNS:

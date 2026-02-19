@@ -6,7 +6,8 @@ const WS_URL = 'ws://127.0.0.1:8000/ws'
 const RECONNECT_DELAY = 2000
 
 export function useWebSocket(
-  dispatch: React.Dispatch<ControllerAction>
+  dispatch: React.Dispatch<ControllerAction>,
+  onStartPressed?: () => void
 ): {
   connected: boolean
   bluetoothDevices: BluetoothDevice[]
@@ -21,6 +22,8 @@ export function useWebSocket(
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>()
   const poppingTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+  const onStartPressedRef = useRef(onStartPressed)
+  onStartPressedRef.current = onStartPressed
 
   const clearBluetoothDevices = useCallback(() => {
     setBluetoothDevices([])
@@ -63,7 +66,7 @@ export function useWebSocket(
             break
           case 'controller_input': {
               const uid = msg.data.unique_id
-              playUISound('controller-input.mp3')
+              playUISound('controller-input.wav')
               const existing = poppingTimers.current.get(uid)
               if (existing) clearTimeout(existing)
               setPoppingControllers((prev) => new Set(prev).add(uid))
@@ -78,6 +81,9 @@ export function useWebSocket(
               poppingTimers.current.set(uid, timer)
               break
             }
+          case 'start_pressed':
+            if (onStartPressedRef.current) onStartPressedRef.current()
+            break
           case 'battery_update':
             dispatch({
               type: 'BATTERY_UPDATE',

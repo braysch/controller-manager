@@ -25,7 +25,9 @@ function App(): JSX.Element {
     bluetoothScanning,
     clearBluetoothDevices,
     poppingControllers
-  } = useWebSocket(dispatch)
+  } = useWebSocket(dispatch, () => {
+    if (ready.length > 0) dispatch({ type: 'APPLY_CONFIG' })
+  })
 
   return (
     <div className="flex flex-col h-screen">
