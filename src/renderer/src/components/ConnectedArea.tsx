@@ -38,6 +38,7 @@ export default function ConnectedArea({
           bluetoothDevices={bluetoothDevices}
           bluetoothScanning={bluetoothScanning}
           onClearDevices={onClearBluetoothDevices}
+          connectedControllers={controllers}
         />
       </div>
     </div>

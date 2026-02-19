@@ -1,23 +1,25 @@
 import { useState } from 'react'
 import { Bluetooth } from 'lucide-react'
 import { api } from '../lib/api'
-import type { BluetoothDevice } from '../types'
+import type { BluetoothDevice, Controller } from '../types'
 import Button from './Button'
 
 interface RescanButtonProps {
   bluetoothDevices: BluetoothDevice[]
   bluetoothScanning: boolean
   onClearDevices: () => void
+  connectedControllers: Controller[]
 }
 
 export default function RescanButton({
   bluetoothDevices,
   bluetoothScanning,
-  onClearDevices
+  onClearDevices,
+  connectedControllers
 }: RescanButtonProps): JSX.Element {
   const [scanning, setScanning] = useState(false)
   const [showDropdown, setShowDropdown] = useState(false)
-  const [pairing, setPairing] = useState<string | null>(null)
+  const [connecting, setConnecting] = useState<string | null>(null)
   const [disconnecting, setDisconnecting] = useState<string | null>(null)
   const [removing, setRemoving] = useState<string | null>(null)
   const [removedAddresses, setRemovedAddresses] = useState<Set<string>>(new Set())
@@ -26,7 +28,20 @@ export default function RescanButton({
   const [contextMenu, setContextMenu] = useState<{ address: string; x: number; y: number } | null>(null)
 
   const isScanning = scanning || bluetoothScanning
+
+  // Set of MAC addresses that are currently connected, for O(1) lookup
+  const connectedAddresses = new Set(
+    connectedControllers.map((c) => c.unique_id.toLowerCase())
+  )
+
   const visibleDevices = bluetoothDevices.filter((d) => !removedAddresses.has(d.address))
+
+  // Already-connected devices sink to the bottom of the list
+  const sortedDevices = [...visibleDevices].sort((a, b) => {
+    const aConn = connectedAddresses.has(a.address.toLowerCase())
+    const bConn = connectedAddresses.has(b.address.toLowerCase())
+    return aConn === bConn ? 0 : aConn ? 1 : -1
+  })
 
   const handleScan = async () => {
     if (isScanning) {
@@ -47,14 +62,14 @@ export default function RescanButton({
     }
   }
 
-  const handlePair = async (address: string) => {
-    setPairing(address)
+  const handleConnect = async (address: string) => {
+    setConnecting(address)
     try {
       await api.pairBluetoothDevice(address)
     } catch {
-      // pairing failed
+      // connect failed
     } finally {
-      setPairing(null)
+      setConnecting(null)
     }
   }
 
@@ -142,30 +157,38 @@ export default function RescanButton({
                 Close
               </button>
             </div>
-            {visibleDevices.length === 0 ? (
+            {sortedDevices.length === 0 ? (
               <p className="px-3 py-4 text-xs text-gray-500 text-center italic">
                 Searching for controllers...
               </p>
             ) : (
-              visibleDevices.map((d) => (
-                <div
-                  key={d.address}
-                  className="flex items-center justify-between px-3 py-2 hover:bg-gray-700"
-                  onContextMenu={(e) => handleContextMenu(e, d.address)}
-                >
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm truncate">{d.name}</p>
-                    <p className="text-[10px] text-gray-500">{d.address}</p>
-                  </div>
-                  <button
-                    onClick={() => handlePair(d.address)}
-                    disabled={pairing === d.address || removing === d.address || disconnecting === d.address}
-                    className="ml-2 px-2 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+              sortedDevices.map((d) => {
+                const isConnected = connectedAddresses.has(d.address.toLowerCase())
+                const isConnecting = connecting === d.address
+                return (
+                  <div
+                    key={d.address}
+                    className="flex items-center justify-between px-3 py-2 hover:bg-gray-700"
+                    onContextMenu={(e) => handleContextMenu(e, d.address)}
                   >
-                    {pairing === d.address ? 'Pairing...' : 'Pair'}
-                  </button>
-                </div>
-              ))
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm truncate">{d.name}</p>
+                      <p className="text-[10px] text-gray-500">{d.address}</p>
+                    </div>
+                    <button
+                      onClick={() => !isConnected && handleConnect(d.address)}
+                      disabled={isConnected || isConnecting || removing === d.address || disconnecting === d.address}
+                      className={`ml-2 px-2 py-1 text-xs rounded disabled:cursor-not-allowed ${
+                        isConnected
+                          ? 'bg-gray-600 text-gray-400 opacity-60'
+                          : 'bg-blue-600 hover:bg-blue-500 disabled:opacity-50'
+                      }`}
+                    >
+                      {isConnected ? 'Connected' : isConnecting ? 'Connecting...' : 'Connect'}
+                    </button>
+                  </div>
+                )
+              })
             )}
           </div>
         )}

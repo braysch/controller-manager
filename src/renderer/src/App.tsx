@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import TopBar from './components/TopBar'
 import ConnectedArea from './components/ConnectedArea'
 import ReadyGrid from './components/ReadyGrid'
@@ -9,6 +9,15 @@ import { useControllers } from './hooks/useControllers'
 
 function App(): JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [gameFolder, setGameFolder] = useState<string | null>(null)
+  const [emulatorFolder, setEmulatorFolder] = useState<string | null>(null)
+
+  useEffect(() => {
+    window.api.getLaunchPaths().then(({ gameFolder, emulatorFolder }) => {
+      setGameFolder(gameFolder)
+      setEmulatorFolder(emulatorFolder)
+    })
+  }, [])
   const { connected, ready, dispatch } = useControllers()
   const {
     connected: wsConnected,
@@ -40,6 +49,8 @@ function App(): JSX.Element {
         onOkay={() => dispatch({ type: 'APPLY_CONFIG' })}
         onBack={() => window.close()}
         hasReady={ready.length > 0}
+        gameFolder={gameFolder}
+        emulatorFolder={emulatorFolder}
       />
 
       <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />

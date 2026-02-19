@@ -1,8 +1,19 @@
-import { app, shell, BrowserWindow, protocol } from 'electron'
+import { app, shell, BrowserWindow, protocol, ipcMain } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { PythonManager } from './python-manager'
 import fs from 'fs'
+
+function getLaunchPaths(): { gameFolder: string | null; emulatorFolder: string | null } {
+  // Filter out the executable itself, Electron/Chromium flags, and dev-mode script paths
+  const positional = process.argv
+    .slice(1)
+    .filter((arg) => !arg.startsWith('-') && !arg.endsWith('.js') && !arg.includes('app.asar'))
+  return {
+    gameFolder: positional[0] ?? null,
+    emulatorFolder: positional[1] ?? null,
+  }
+}
 
 let pythonManager: PythonManager
 
@@ -50,6 +61,8 @@ app.whenReady().then(() => {
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
   })
+
+  ipcMain.handle('get-launch-paths', () => getLaunchPaths())
 
   pythonManager = new PythonManager()
   pythonManager.start()

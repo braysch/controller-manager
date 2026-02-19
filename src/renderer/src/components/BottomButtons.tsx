@@ -5,13 +5,17 @@ interface BottomButtonsProps {
   onReassign: () => void
   onOkay: () => void
   hasReady: boolean
+  gameFolder: string | null
+  emulatorFolder: string | null
 }
 
 export default function BottomButtons({
   onBack,
   onReassign,
   onOkay,
-  hasReady
+  hasReady,
+  gameFolder,
+  emulatorFolder
 }: BottomButtonsProps): JSX.Element {
   return (
     <div className="flex items-center justify-center px-4 py-3 bg-gray-800 border-t border-gray-700">
@@ -21,8 +25,12 @@ export default function BottomButtons({
 
       <div className='text-xl px-8 w-full flex justify-center flex-1'>
         <div className='flex justify-center gap-x-4 h-[75px]'>
-          <img className='h-full' src='local://home/brayschway/Server Media/Games/Video Games/Stardew Valley/logo.png' alt='Game Logo'></img>
-          <img className='h-full' src='local://home/brayschway/Server Media/Games/Emulators/Yuzu/logo.png' alt='Yuzu Logo'></img>
+          {gameFolder && (
+            <img className='h-full' src={`local://${gameFolder}/logo.png`} alt='Game Logo' />
+          )}
+          {emulatorFolder && (
+            <img className='h-full' src={`local://${emulatorFolder}/logo.png`} alt='Emulator Logo' />
+          )}
         </div>
       </div>
 
