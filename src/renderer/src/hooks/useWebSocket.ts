@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import type { WSEvent, ControllerAction, BluetoothDevice } from '../types'
-import { playSound } from '../lib/sounds'
+import { playSound, playUISound } from '../lib/sounds'
 
 const WS_URL = 'ws://127.0.0.1:8000/ws'
 const RECONNECT_DELAY = 2000
@@ -12,12 +12,15 @@ export function useWebSocket(
   bluetoothDevices: BluetoothDevice[]
   bluetoothScanning: boolean
   clearBluetoothDevices: () => void
+  poppingControllers: Set<string>
 } {
   const [connected, setConnected] = useState(false)
   const [bluetoothDevices, setBluetoothDevices] = useState<BluetoothDevice[]>([])
   const [bluetoothScanning, setBluetoothScanning] = useState(false)
+  const [poppingControllers, setPoppingControllers] = useState<Set<string>>(new Set())
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>()
+  const poppingTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
 
   const clearBluetoothDevices = useCallback(() => {
     setBluetoothDevices([])
@@ -58,6 +61,23 @@ export function useWebSocket(
           case 'controller_unready':
             dispatch({ type: 'CONTROLLER_UNREADY', unique_id: msg.data.unique_id })
             break
+          case 'controller_input': {
+              const uid = msg.data.unique_id
+              playUISound('controller-input.mp3')
+              const existing = poppingTimers.current.get(uid)
+              if (existing) clearTimeout(existing)
+              setPoppingControllers((prev) => new Set(prev).add(uid))
+              const timer = setTimeout(() => {
+                setPoppingControllers((prev) => {
+                  const next = new Set(prev)
+                  next.delete(uid)
+                  return next
+                })
+                poppingTimers.current.delete(uid)
+              }, 400)
+              poppingTimers.current.set(uid, timer)
+              break
+            }
           case 'battery_update':
             dispatch({
               type: 'BATTERY_UPDATE',
@@ -103,5 +123,5 @@ export function useWebSocket(
     }
   }, [connect])
 
-  return { connected, bluetoothDevices, bluetoothScanning, clearBluetoothDevices }
+  return { connected, bluetoothDevices, bluetoothScanning, clearBluetoothDevices, poppingControllers }
 }

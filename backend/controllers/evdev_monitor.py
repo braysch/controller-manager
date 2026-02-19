@@ -43,6 +43,7 @@ class EvdevMonitor:
         self.on_connected: Optional[Callable] = None  # async callback(device_info: dict)
         self.on_disconnected: Optional[Callable] = None  # async callback(device_path: str)
         self.on_button_press: Optional[Callable] = None  # async callback(device_path: str, button_code: int)
+        self.on_input: Optional[Callable] = None  # async callback(device_path: str)
         self._running = False
         self._known_paths: set[str] = set()
         # Persistent device handles for button polling (path -> InputDevice)
@@ -60,6 +61,8 @@ class EvdevMonitor:
         self._ignore_until: dict[str, float] = {}
         # Monotonic timestamp of the last press for each button per device
         self._button_press_time: dict[str, dict[int, float]] = {}
+        # Analog axes that have already crossed the input threshold (rising-edge only)
+        self._input_axis_triggered: dict[str, set[int]] = {}
 
     def stop(self):
         self._running = False
@@ -170,6 +173,7 @@ class EvdevMonitor:
                         self._ignore_until[path] = time.monotonic() + 1.0
                         self._trigger_max[path] = self._detect_analog_triggers(device) or {}
                         self._button_press_time[path] = {}
+                        self._input_axis_triggered[path] = set()
 
                         if self.on_connected:
                             await self.on_connected(info)
@@ -189,6 +193,7 @@ class EvdevMonitor:
                     self._trigger_max.pop(path, None)
                     self._ignore_until.pop(path, None)
                     self._button_press_time.pop(path, None)
+                    self._input_axis_triggered.pop(path, None)
                     if self.on_disconnected:
                         await self.on_disconnected(path)
                     print(f"[EvdevMonitor] Disconnected: {path}")
@@ -322,6 +327,7 @@ class EvdevMonitor:
             self._trigger_max.pop(path, None)
             self._ignore_until.pop(path, None)
             self._button_press_time.pop(path, None)
+            self._input_axis_triggered.pop(path, None)
 
         if not fd_map:
             return
@@ -350,6 +356,8 @@ class EvdevMonitor:
                         if event.value == 1:   # key down
                             held.add(event.code)
                             self._button_press_time.setdefault(path, {})[event.code] = time.monotonic()
+                            if self.on_input:
+                                await self.on_input(path)
                         elif event.value == 0:  # key up
                             held.discard(event.code)
                         if event.code in _BUMPER_TRIGGER_BTNS:
@@ -366,6 +374,15 @@ class EvdevMonitor:
                                 axis_name = axis_name[0]
                             tmax = self._trigger_max[path][event.code]
                             print(f"[{device.name}] {axis_name} ({event.code}) value={event.value}/{tmax}")
+                        # Fire on_input on rising edge past 75% of max
+                        triggered = self._input_axis_triggered.setdefault(path, set())
+                        tmax = self._trigger_max[path][event.code]
+                        if event.value >= tmax * 0.75 and event.code not in triggered:
+                            triggered.add(event.code)
+                            if self.on_input:
+                                await self.on_input(path)
+                        elif event.value < tmax * 0.25 and event.code in triggered:
+                            triggered.discard(event.code)
 
                 # Always check combo state after reading events.  Previously this was
                 # gated on combo_check_needed (set only on key-down or threshold
@@ -383,6 +400,7 @@ class EvdevMonitor:
                 self._trigger_max.pop(path, None)
                 self._ignore_until.pop(path, None)
                 self._button_press_time.pop(path, None)
+                self._input_axis_triggered.pop(path, None)
             except Exception:
                 pass
 

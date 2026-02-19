@@ -7,6 +7,7 @@ BACKEND_DIR = Path(__file__).parent
 ASSETS_DIR = PROJECT_ROOT / "assets"
 IMAGES_DIR = ASSETS_DIR / "images"
 SOUNDS_DIR = ASSETS_DIR / "sounds"
+UI_SOUNDS_DIR = ASSETS_DIR / "ui-sounds"
 
 # DB lives in a writable user data dir (set by Electron in production,
 # falls back to project root in dev).

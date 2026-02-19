@@ -89,6 +89,13 @@ async def on_button_press(device_path: str, button_code: int):
         await ws_manager.broadcast("controller_ready", controller.model_dump())
 
 
+async def on_input(device_path: str):
+    """Called by evdev_monitor on any significant input."""
+    unique_id = state_manager.get_unique_id_for_path(device_path)
+    if unique_id:
+        await ws_manager.broadcast("controller_input", {"unique_id": unique_id})
+
+
 async def on_battery_update(device_path: str, percent: int):
     """Called by battery_monitor on change."""
     unique_id = state_manager.get_unique_id_for_path(device_path)
@@ -107,6 +114,7 @@ async def lifespan(app: FastAPI):
     evdev_monitor.on_connected = on_controller_connected
     evdev_monitor.on_disconnected = on_controller_disconnected
     evdev_monitor.on_button_press = on_button_press
+    evdev_monitor.on_input = on_input
     battery_monitor.on_update = on_battery_update
 
     monitor_task = asyncio.create_task(evdev_monitor.run())
@@ -369,3 +377,10 @@ async def serve_sound(filename: str):
     if path.exists() and path.is_file():
         return FileResponse(path)
     return FileResponse(config.SOUNDS_DIR / "default.mp3")
+
+
+@app.get("/assets/ui-sounds/{filename}")
+async def serve_ui_sound(filename: str):
+    path = config.UI_SOUNDS_DIR / filename
+    if path.exists() and path.is_file():
+        return FileResponse(path)

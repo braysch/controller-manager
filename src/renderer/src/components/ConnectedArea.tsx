@@ -6,13 +6,15 @@ interface ConnectedAreaProps {
   bluetoothDevices: BluetoothDevice[]
   bluetoothScanning: boolean
   onClearBluetoothDevices: () => void
+  poppingControllers: Set<string>
 }
 
 export default function ConnectedArea({
   controllers,
   bluetoothDevices,
   bluetoothScanning,
-  onClearBluetoothDevices
+  onClearBluetoothDevices,
+  poppingControllers
 }: ConnectedAreaProps): JSX.Element {
   return (
     <div className="flex-shrink-0">
@@ -29,7 +31,7 @@ export default function ConnectedArea({
                 title={c.custom_name || c.name}
                 className={`w-10 h-10 object-contain ${
                   c.paired_but_disconnected ? 'opacity-50' : ''
-                }`}
+                } ${poppingControllers.has(c.unique_id) ? 'controller-pop' : ''}`}
               />
             ))
           )}

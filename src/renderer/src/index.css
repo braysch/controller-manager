@@ -9,3 +9,14 @@ body {
   overflow: hidden;
   user-select: none;
 }
+
+@keyframes controller-pop {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(1.35); }
+  70%  { transform: scale(0.9); }
+  100% { transform: scale(1); }
+}
+
+.controller-pop {
+  animation: controller-pop 0.2s ease-out;
+}

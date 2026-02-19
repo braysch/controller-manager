@@ -6,9 +6,10 @@ import BatteryIndicator from './BatteryIndicator'
 interface ReadySlotProps {
   controller: ReadyController | null
   slotIndex: number
+  poppingControllers: Set<string>
 }
 
-export default function ReadySlot({ controller, slotIndex }: ReadySlotProps): JSX.Element {
+export default function ReadySlot({ controller, slotIndex, poppingControllers }: ReadySlotProps): JSX.Element {
   if (!controller) {
     return (
       <div className="flex flex-col items-center mb-8">
@@ -19,6 +20,7 @@ export default function ReadySlot({ controller, slotIndex }: ReadySlotProps): JS
     )
   }
 
+  const isPopping = poppingControllers.has(controller.unique_id)
   const isCombined = controller.component_unique_ids && controller.component_unique_ids.length > 0
   const displayName = isCombined && controller.component_names && controller.component_names.length > 0
     ? controller.component_names.join(' + ')
@@ -29,7 +31,7 @@ export default function ReadySlot({ controller, slotIndex }: ReadySlotProps): JS
       <div className="flex flex-col items-center justify-between rounded-xl border-2 border-blue-500/50 bg-gray-800 p-3 w-full aspect-square">
         <PlayerIndicator playerNumber={slotIndex + 1} />
         {isCombined && controller.component_imgs ? (
-          <div className="flex items-center justify-center flex-1 w-full py-1 min-h-0">
+          <div className={`flex items-center justify-center flex-1 w-full py-1 min-h-0 ${isPopping ? 'controller-pop' : ''}`}>
             {controller.component_imgs.map((img, i) => (
               <img
                 key={controller.component_unique_ids![i] || i}
@@ -44,7 +46,7 @@ export default function ReadySlot({ controller, slotIndex }: ReadySlotProps): JS
           <img
             src={`http://127.0.0.1:8000/assets/images/${controller.img_src}`}
             alt={controller.name}
-            className="flex-1 w-3/4 object-contain py-1 min-h-0"
+            className={`flex-1 w-3/4 object-contain py-1 min-h-0 ${isPopping ? 'controller-pop' : ''}`}
           />
         )}
         <div className="flex items-center gap-1 flex-shrink-0">

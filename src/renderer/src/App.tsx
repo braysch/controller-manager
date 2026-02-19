@@ -23,7 +23,8 @@ function App(): JSX.Element {
     connected: wsConnected,
     bluetoothDevices,
     bluetoothScanning,
-    clearBluetoothDevices
+    clearBluetoothDevices,
+    poppingControllers
   } = useWebSocket(dispatch)
 
   return (
@@ -36,10 +37,11 @@ function App(): JSX.Element {
           bluetoothDevices={bluetoothDevices}
           bluetoothScanning={bluetoothScanning}
           onClearBluetoothDevices={clearBluetoothDevices}
+          poppingControllers={poppingControllers}
         />
         <div className='flex h-full justify-center items-center w-full'>
           <div className='w-[1200px]'>
-        <ReadyGrid controllers={ready} />
+        <ReadyGrid controllers={ready} poppingControllers={poppingControllers} />
         </div>
         </div>
       </div>
