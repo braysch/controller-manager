@@ -76,22 +76,68 @@ class StateManager:
         return was_ready
 
     @staticmethod
-    def _combined_joycon_components(controller: "ConnectedController") -> tuple[list[str], list[str], list[str]] | None:
-        """Return (component_unique_ids, component_names, component_imgs) if this is a combined
-        Joy-Con pair, or None if it's a standalone/non-Joy-Con device."""
+    def _is_combined_joycon(controller: "ConnectedController") -> bool:
+        """Return True if this device is a combined Joy-Con pair (not standalone L or R)."""
         name_lower = controller.name.lower()
         if "joy-con" not in name_lower:
-            return None
-        # Standalone Joy-Cons have known product IDs or explicit (L)/(R) suffixes
+            return False
         if controller.product_id in (0x2006, 0x2007):
-            return None
+            return False
         if name_lower.endswith("(l)") or name_lower.endswith("(r)"):
+            return False
+        return True
+
+    async def _combined_joycon_components(
+        self, controller: "ConnectedController"
+    ) -> tuple[list[str], list[str], list[str], str] | None:
+        """Return (component_unique_ids, component_names, component_imgs, snd_src) for a
+        combined Joy-Con pair.
+
+        Searches connected/ready controllers for individual Joy-Con L (0x2006) and R (0x2007)
+        profiles and uses their image, name, and sound directly.  Falls back to DB type
+        defaults only when the individual Joy-Cons are not currently tracked.
+        """
+        if not self._is_combined_joycon(controller):
             return None
+
         uid = controller.unique_id
+
+        joycon_l = (
+            next((c for c in self._connected.values() if c.product_id == 0x2006), None)
+            or next((c for c in self._ready.values() if c.product_id == 0x2006), None)
+        )
+        joycon_r = (
+            next((c for c in self._connected.values() if c.product_id == 0x2007), None)
+            or next((c for c in self._ready.values() if c.product_id == 0x2007), None)
+        )
+
+        if joycon_l:
+            l_uid = joycon_l.unique_id
+            l_name = joycon_l.custom_name or joycon_l.name
+            l_img = joycon_l.img_src
+            l_snd = joycon_l.snd_src
+        else:
+            type_l = await database.get_type_default("Joy-Con (L)", 0x057E, 0x2006)
+            l_uid = uid + "_L"
+            l_name = type_l.name_pattern if type_l else "Joy-Con (L)"
+            l_img = type_l.img_src if type_l else "joycon_l.png"
+            l_snd = type_l.snd_src if type_l else "switch.mp3"
+
+        if joycon_r:
+            r_uid = joycon_r.unique_id
+            r_name = joycon_r.custom_name or joycon_r.name
+            r_img = joycon_r.img_src
+        else:
+            type_r = await database.get_type_default("Joy-Con (R)", 0x057E, 0x2007)
+            r_uid = uid + "_R"
+            r_name = type_r.name_pattern if type_r else "Joy-Con (R)"
+            r_img = type_r.img_src if type_r else "joycon_r.png"
+
         return (
-            [uid + "_L", uid + "_R"],
-            ["Joy-Con (L)", "Joy-Con (R)"],
-            ["joycon_l.png", "joycon_r.png"],
+            [l_uid, r_uid],
+            [l_name, r_name],
+            [l_img, r_img],
+            l_snd,
         )
 
     async def move_to_ready(self, device_path: str) -> Optional[ReadyController]:
@@ -104,15 +150,18 @@ class StateManager:
         connected = self._connected.pop(device_path)
         slot_index = len(self._ready)
 
-        components = self._combined_joycon_components(connected)
-        component_unique_ids, component_names, component_imgs = components if components else (None, None, None)
+        components = await self._combined_joycon_components(connected)
+        if components:
+            component_unique_ids, component_names, component_imgs, derived_snd = components
+        else:
+            component_unique_ids = component_names = component_imgs = derived_snd = None
 
         ready = ReadyController(
             unique_id=connected.unique_id,
             name=connected.name,
             custom_name=connected.custom_name,
             img_src=connected.img_src,
-            snd_src=connected.snd_src,
+            snd_src=derived_snd or connected.snd_src,
             connection_type=connected.connection_type,
             battery_percent=connected.battery_percent,
             slot_index=slot_index,
