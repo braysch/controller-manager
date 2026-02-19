@@ -204,25 +204,23 @@ class EvdevMonitor:
 
     @staticmethod
     def _detect_analog_triggers(device: InputDevice) -> Optional[dict[int, int]]:
-        """Return {ABS_Z: max, ABS_RZ: max} if the device has real analog trigger axes, else None.
+        """Return {axis_code: max_value} for all real analog trigger axes on this device, else None.
 
-        The only reliable way to distinguish real triggers from Joy-Con / IMU axes
-        that also use ABS_Z / ABS_RZ is the minimum value:
-          - Real triggers always start at 0 (min == 0), regardless of driver.
-            Range varies widely: 0-255 (DS4/Switch Pro), 0-1023 (Xbox via xpad/hid-xbox),
-            0-32767 (Xbox via xpadneo).
-          - IMU / gyroscope axes always have a negative minimum (e.g. -32767).
+        Checks both ABS_Z/ABS_RZ (DS4, Switch Pro, xpadneo) and ABS_BRAKE/ABS_GAS
+        (Xbox via hid-xbox/xpad).  Real triggers always have min == 0; IMU/gyro axes
+        have negative minimums (e.g. -32767).  Requires at least two qualifying axes
+        to form a usable left+right combo.
         """
         try:
             caps = device.capabilities()
             abs_axes = dict(caps.get(ecodes.EV_ABS, []))
-            if ecodes.ABS_Z not in abs_axes or ecodes.ABS_RZ not in abs_axes:
-                return None
-            z_info = abs_axes[ecodes.ABS_Z]
-            rz_info = abs_axes[ecodes.ABS_RZ]
-            if z_info.min >= 0 and rz_info.min >= 0:
-                return {ecodes.ABS_Z: max(z_info.max, 1), ecodes.ABS_RZ: max(rz_info.max, 1)}
-            return None
+            result = {}
+            for axis in (ecodes.ABS_Z, ecodes.ABS_RZ, ecodes.ABS_BRAKE, ecodes.ABS_GAS):
+                if axis in abs_axes:
+                    info = abs_axes[axis]
+                    if info.min >= 0:
+                        result[axis] = max(info.max, 1)
+            return result if len(result) >= 2 else None
         except Exception:
             return None
 
@@ -249,11 +247,10 @@ class EvdevMonitor:
         # Check analog triggers only for devices with real trigger axes
         trigger_max = self._trigger_max.get(path)
         if trigger_max:
-            left = triggers.get(ecodes.ABS_Z, 0)
-            right = triggers.get(ecodes.ABS_RZ, 0)
-            left_thresh = trigger_max[ecodes.ABS_Z] * TRIGGER_THRESHOLD_FRACTION
-            right_thresh = trigger_max[ecodes.ABS_RZ] * TRIGGER_THRESHOLD_FRACTION
-            if left >= left_thresh and right >= right_thresh:
+            if all(
+                triggers.get(axis, 0) >= trigger_max[axis] * TRIGGER_THRESHOLD_FRACTION
+                for axis in trigger_max
+            ):
                 self._last_fired[path] = now
                 if self.on_button_press:
                     await self.on_button_press(path, 0)
@@ -306,7 +303,7 @@ class EvdevMonitor:
                             combo_check_needed = True
                         elif event.value == 0:  # key up
                             held.discard(event.code)
-                    elif event.type == ecodes.EV_ABS and event.code in (ecodes.ABS_Z, ecodes.ABS_RZ):
+                    elif event.type == ecodes.EV_ABS and event.code in self._trigger_max.get(path, {}):
                         axis_map = self._trigger_values.setdefault(path, {})
                         prev = axis_map.get(event.code, 0)
                         axis_map[event.code] = event.value

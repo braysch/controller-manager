@@ -222,6 +222,26 @@ class BlueZManager:
             print(f"[BlueZ] Failed to remove device {device_path}: {e}")
             return False
 
+    async def _ensure_disconnected(self, device_path: str) -> None:
+        """Disconnect a device if it is currently connected, then wait briefly."""
+        try:
+            bus = self._get_bus()
+            dbus_props = bus.get_proxy(
+                "org.bluez", device_path, "org.freedesktop.DBus.Properties"
+            )
+            connected_var = dbus_props.Get("org.bluez.Device1", "Connected")
+            connected = (
+                connected_var.unpack()
+                if hasattr(connected_var, "unpack")
+                else bool(connected_var)
+            )
+            if connected:
+                device = bus.get_proxy("org.bluez", device_path, "org.bluez.Device1")
+                device.Disconnect()
+                await asyncio.sleep(0.5)  # Give BlueZ time to process the disconnect
+        except Exception:
+            pass
+
     async def force_pair_device(self, address: str) -> bool:
         """Remove the device from BlueZ then rediscover and pair from scratch."""
         # Remove existing entry if BlueZ knows about it
@@ -295,10 +315,11 @@ class BlueZManager:
         if not device_path:
             print(f"[BlueZ] Device {address} not found for removal")
             return False
+        await self._ensure_disconnected(device_path)
         return self._remove_device(device_path)
 
     async def disconnect_all_controllers(self) -> int:
-        """Disconnect all currently connected Bluetooth devices."""
+        """Disconnect all connected game controller Bluetooth devices."""
         try:
             bus = self._get_bus()
             obj_manager = bus.get_proxy("org.bluez", "/", "org.freedesktop.DBus.ObjectManager")
@@ -308,6 +329,9 @@ class BlueZManager:
                 if "org.bluez.Device1" not in interfaces:
                     continue
                 props = interfaces["org.bluez.Device1"]
+                # Only disconnect game controllers, never mice/keyboards/headsets/etc.
+                if not self._is_controller(props):
+                    continue
                 try:
                     connected_var = props.get("Connected")
                     connected = bool(connected_var.unpack()) if hasattr(connected_var, "unpack") else bool(connected_var)
@@ -320,6 +344,7 @@ class BlueZManager:
                     device.Disconnect()
                     count += 1
                     print(f"[BlueZ] Disconnected {path}")
+                    await asyncio.sleep(0.3)  # Brief pause between disconnects
                 except Exception as e:
                     print(f"[BlueZ] Failed to disconnect {path}: {e}")
             print(f"[BlueZ] Disconnected {count} device(s)")
@@ -329,7 +354,7 @@ class BlueZManager:
             return 0
 
     async def remove_all_controllers(self) -> int:
-        """Remove all paired Bluetooth devices from BlueZ."""
+        """Remove all paired game controller Bluetooth devices from BlueZ."""
         try:
             bus = self._get_bus()
             obj_manager = bus.get_proxy("org.bluez", "/", "org.freedesktop.DBus.ObjectManager")
@@ -339,6 +364,9 @@ class BlueZManager:
                 if "org.bluez.Device1" not in interfaces:
                     continue
                 props = interfaces["org.bluez.Device1"]
+                # Only remove game controllers, never mice/keyboards/headsets/etc.
+                if not self._is_controller(props):
+                    continue
                 try:
                     paired_var = props.get("Paired")
                     paired = bool(paired_var.unpack()) if hasattr(paired_var, "unpack") else bool(paired_var)
@@ -346,7 +374,12 @@ class BlueZManager:
                     continue
                 if paired:
                     to_remove.append(str(path))
-            count = sum(1 for p in to_remove if self._remove_device(p))
+            count = 0
+            for p in to_remove:
+                await self._ensure_disconnected(p)
+                if self._remove_device(p):
+                    count += 1
+                await asyncio.sleep(0.3)  # Brief pause between removals
             print(f"[BlueZ] Removed {count} device(s)")
             return count
         except Exception as e:

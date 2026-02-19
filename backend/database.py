@@ -53,6 +53,7 @@ SEED_TYPE_DEFAULTS = [
     ("Switch Pro Controller", "switch_pro.png", "switch.mp3", 0x057E, 0x2009, None),
     ("Joy-Con (L)", "joycon_l.png", "switch.mp3", 0x057E, 0x2006, None),
     ("Joy-Con (R)", "joycon_r.png", "switch.mp3", 0x057E, 0x2007, None),
+    ("Joy-Con (L+R)", "joycon_l.png", "switch.mp3", None, None, None),
     ("GameCube Controller Adapter", "gamecube.png", "switch_gamecube.mp3", 0x057E, 0x0337, None),
     # Lic Pro Controller: BT HID reports vendor=0/product=0, but SDL2 HIDAPI
     # identifies it as a Switch Pro Controller with this GUID

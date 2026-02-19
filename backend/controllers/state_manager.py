@@ -75,6 +75,25 @@ class StateManager:
 
         return was_ready
 
+    @staticmethod
+    def _combined_joycon_components(controller: "ConnectedController") -> tuple[list[str], list[str], list[str]] | None:
+        """Return (component_unique_ids, component_names, component_imgs) if this is a combined
+        Joy-Con pair, or None if it's a standalone/non-Joy-Con device."""
+        name_lower = controller.name.lower()
+        if "joy-con" not in name_lower:
+            return None
+        # Standalone Joy-Cons have known product IDs or explicit (L)/(R) suffixes
+        if controller.product_id in (0x2006, 0x2007):
+            return None
+        if name_lower.endswith("(l)") or name_lower.endswith("(r)"):
+            return None
+        uid = controller.unique_id
+        return (
+            [uid + "_L", uid + "_R"],
+            ["Joy-Con (L)", "Joy-Con (R)"],
+            ["joycon_l.png", "joycon_r.png"],
+        )
+
     async def move_to_ready(self, device_path: str) -> Optional[ReadyController]:
         """Move controller from connected to ready. Returns ReadyController or None."""
         if device_path not in self._connected:
@@ -84,6 +103,9 @@ class StateManager:
 
         connected = self._connected.pop(device_path)
         slot_index = len(self._ready)
+
+        components = self._combined_joycon_components(connected)
+        component_unique_ids, component_names, component_imgs = components if components else (None, None, None)
 
         ready = ReadyController(
             unique_id=connected.unique_id,
@@ -98,6 +120,9 @@ class StateManager:
             port=connected.port,
             vendor_id=connected.vendor_id,
             product_id=connected.product_id,
+            component_unique_ids=component_unique_ids,
+            component_names=component_names,
+            component_imgs=component_imgs,
         )
 
         self._ready[device_path] = ready

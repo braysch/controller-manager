@@ -15,6 +15,9 @@ export interface Controller {
 
 export interface ReadyController extends Controller {
   slot_index: number
+  component_unique_ids?: string[]
+  component_names?: string[]
+  component_imgs?: string[]
 }
 
 export interface ControllerProfile {

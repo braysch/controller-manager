@@ -21,7 +21,7 @@ export default function ReadySlot({ controller, slotIndex }: ReadySlotProps): JS
 
   const isCombined = controller.component_unique_ids && controller.component_unique_ids.length > 0
   const displayName = isCombined && controller.component_names && controller.component_names.length > 0
-    ? controller.component_names.join(' and ')
+    ? controller.component_names.join(' + ')
     : controller.custom_name || controller.name
 
   return (

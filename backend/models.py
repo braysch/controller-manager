@@ -48,6 +48,9 @@ class ReadyController(BaseModel):
     port: Optional[int] = None
     vendor_id: Optional[int] = None
     product_id: Optional[int] = None
+    component_unique_ids: Optional[list[str]] = None
+    component_names: Optional[list[str]] = None
+    component_imgs: Optional[list[str]] = None
 
 
 class MoveToReadyRequest(BaseModel):
