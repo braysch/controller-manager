@@ -91,47 +91,67 @@ class StateManager:
         self, controller: "ConnectedController"
     ) -> tuple[list[str], list[str], list[str], str] | None:
         """Return (component_unique_ids, component_names, component_imgs, snd_src) for a
-        combined Joy-Con pair.
+        combined Joy-Con pair, or None if not combined.
 
-        Searches connected/ready controllers for individual Joy-Con L (0x2006) and R (0x2007)
-        profiles and uses their image, name, and sound directly.  Falls back to DB type
-        defaults only when the individual Joy-Cons are not currently tracked.
+        Resolution order for each side:
+          1. In-memory connected/ready list (product_id match) — present when the driver
+             exposes individual nodes alongside the combined device.
+          2. controllers table queried by vendor_id + product_id — the user's saved profiles
+             for their specific Joy-Cons, used when the driver grabs the individual nodes
+             and they never appear as separate evdev devices.
+          3. controller_type_defaults — generic fallback with stock name/image.
         """
         if not self._is_combined_joycon(controller):
             return None
 
         uid = controller.unique_id
 
+        # --- Left Joy-Con (0x2006) ---
         joycon_l = (
             next((c for c in self._connected.values() if c.product_id == 0x2006), None)
             or next((c for c in self._ready.values() if c.product_id == 0x2006), None)
         )
-        joycon_r = (
-            next((c for c in self._connected.values() if c.product_id == 0x2007), None)
-            or next((c for c in self._ready.values() if c.product_id == 0x2007), None)
-        )
-
         if joycon_l:
             l_uid = joycon_l.unique_id
             l_name = joycon_l.custom_name or joycon_l.name
             l_img = joycon_l.img_src
             l_snd = joycon_l.snd_src
         else:
-            type_l = await database.get_type_default("Joy-Con (L)", 0x057E, 0x2006)
-            l_uid = uid + "_L"
-            l_name = type_l.name_pattern if type_l else "Joy-Con (L)"
-            l_img = type_l.img_src if type_l else "joycon_l.png"
-            l_snd = type_l.snd_src if type_l else "switch.mp3"
+            profiles_l = await database.get_profiles_by_product(0x057E, 0x2006)
+            if profiles_l:
+                p = profiles_l[0]
+                l_uid = p.unique_id
+                l_name = p.custom_name or p.default_name
+                l_img = p.img_src
+                l_snd = p.snd_src
+            else:
+                type_l = await database.get_type_default("Joy-Con (L)", 0x057E, 0x2006)
+                l_uid = uid + "_L"
+                l_name = type_l.name_pattern if type_l else "Joy-Con (L)"
+                l_img = type_l.img_src if type_l else "joycon_l.png"
+                l_snd = type_l.snd_src if type_l else "switch.mp3"
 
+        # --- Right Joy-Con (0x2007) ---
+        joycon_r = (
+            next((c for c in self._connected.values() if c.product_id == 0x2007), None)
+            or next((c for c in self._ready.values() if c.product_id == 0x2007), None)
+        )
         if joycon_r:
             r_uid = joycon_r.unique_id
             r_name = joycon_r.custom_name or joycon_r.name
             r_img = joycon_r.img_src
         else:
-            type_r = await database.get_type_default("Joy-Con (R)", 0x057E, 0x2007)
-            r_uid = uid + "_R"
-            r_name = type_r.name_pattern if type_r else "Joy-Con (R)"
-            r_img = type_r.img_src if type_r else "joycon_r.png"
+            profiles_r = await database.get_profiles_by_product(0x057E, 0x2007)
+            if profiles_r:
+                p = profiles_r[0]
+                r_uid = p.unique_id
+                r_name = p.custom_name or p.default_name
+                r_img = p.img_src
+            else:
+                type_r = await database.get_type_default("Joy-Con (R)", 0x057E, 0x2007)
+                r_uid = uid + "_R"
+                r_name = type_r.name_pattern if type_r else "Joy-Con (R)"
+                r_img = type_r.img_src if type_r else "joycon_r.png"
 
         return (
             [l_uid, r_uid],

@@ -189,6 +189,33 @@ async def _migrate_from_old(db: aiosqlite.Connection) -> None:
 
 # --- CRUD operations ---
 
+async def get_profiles_by_product(vendor_id: int, product_id: int) -> list[ControllerProfile]:
+    """Return all controller profiles matching vendor_id + product_id, most recently updated first."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT unique_id, default_name, custom_name, img_src, snd_src, vendor_id, product_id, guid_override "
+            "FROM controllers WHERE vendor_id = ? AND product_id = ? ORDER BY updated_at DESC",
+            (vendor_id, product_id),
+        )
+        rows = await cursor.fetchall()
+        return [
+            ControllerProfile(
+                unique_id=r[0],
+                default_name=r[1],
+                custom_name=r[2],
+                img_src=r[3] or "default.png",
+                snd_src=r[4] or "default.mp3",
+                vendor_id=r[5],
+                product_id=r[6],
+                guid_override=r[7],
+            )
+            for r in rows
+        ]
+    finally:
+        await db.close()
+
+
 async def get_profile(unique_id: str) -> Optional[ControllerProfile]:
     db = await get_db()
     try:

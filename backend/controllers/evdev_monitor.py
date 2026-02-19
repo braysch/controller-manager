@@ -14,6 +14,17 @@ from evdev import InputDevice, ecodes, list_devices
 TRIGGER_THRESHOLD_FRACTION = 0.5
 # Seconds before the same device can fire the combo again
 COMBO_COOLDOWN = 1.5
+# How long after a button press it still counts toward a combo, even if released.
+# Covers hardware latency between paired Joy-Cons (~1 s on the right Joy-Con).
+COMBO_WINDOW = 2.0
+
+# Bumper/trigger button codes used for debug output
+_BUMPER_TRIGGER_BTNS: dict[int, str] = {
+    ecodes.BTN_TL:  "BTN_TL  (L bumper)",
+    ecodes.BTN_TR:  "BTN_TR  (R bumper)",
+    ecodes.BTN_TL2: "BTN_TL2 (ZL trigger)",
+    ecodes.BTN_TR2: "BTN_TR2 (ZR trigger)",
+}
 
 # Button combos: every button in a frozenset must be held simultaneously.
 # Listed in order of precedence; first match wins.
@@ -47,6 +58,8 @@ class EvdevMonitor:
         self._trigger_max: dict[str, dict[int, int]] = {}
         # Ignore combo events until this monotonic time (skips init state sync)
         self._ignore_until: dict[str, float] = {}
+        # Monotonic timestamp of the last press for each button per device
+        self._button_press_time: dict[str, dict[int, float]] = {}
 
     def stop(self):
         self._running = False
@@ -156,6 +169,7 @@ class EvdevMonitor:
                         self._trigger_values[path] = {}
                         self._ignore_until[path] = time.monotonic() + 1.0
                         self._trigger_max[path] = self._detect_analog_triggers(device) or {}
+                        self._button_press_time[path] = {}
 
                         if self.on_connected:
                             await self.on_connected(info)
@@ -174,6 +188,7 @@ class EvdevMonitor:
                     self._last_fired.pop(path, None)
                     self._trigger_max.pop(path, None)
                     self._ignore_until.pop(path, None)
+                    self._button_press_time.pop(path, None)
                     if self.on_disconnected:
                         await self.on_disconnected(path)
                     print(f"[EvdevMonitor] Disconnected: {path}")
@@ -253,10 +268,23 @@ class EvdevMonitor:
 
         held = self._held_buttons.get(path, set())
         triggers = self._trigger_values.get(path, {})
+        press_time = self._button_press_time.get(path, {})
+
+        def recently_pressed(code: int) -> bool:
+            """True if the button is currently held OR was pressed within COMBO_WINDOW seconds.
+
+            Covers hardware latency between Joy-Con pairs: the right Joy-Con can
+            lag ~1 s behind the left, so its button event arrives well after the
+            left button was pressed and possibly released.
+            """
+            if code in held:
+                return True
+            t = press_time.get(code)
+            return t is not None and (now - t) <= COMBO_WINDOW
 
         # Check digital button combos (first match wins)
         for combo in _BUTTON_COMBOS:
-            if combo.issubset(held):
+            if all(recently_pressed(code) for code in combo):
                 self._last_fired[path] = now
                 if self.on_button_press:
                     await self.on_button_press(path, 0)
@@ -293,6 +321,7 @@ class EvdevMonitor:
             self._trigger_values.pop(path, None)
             self._trigger_max.pop(path, None)
             self._ignore_until.pop(path, None)
+            self._button_press_time.pop(path, None)
 
         if not fd_map:
             return
@@ -305,34 +334,46 @@ class EvdevMonitor:
         except Exception:
             return
 
+        readable_paths: set[str] = set()
+
         for fd in readable:
             entry = fd_map.get(fd)
             if not entry:
                 continue
             path, device = entry
+            readable_paths.add(path)
 
             try:
-                combo_check_needed = False
                 for event in device.read():
                     if event.type == ecodes.EV_KEY:
                         held = self._held_buttons.setdefault(path, set())
                         if event.value == 1:   # key down
                             held.add(event.code)
-                            combo_check_needed = True
+                            self._button_press_time.setdefault(path, {})[event.code] = time.monotonic()
                         elif event.value == 0:  # key up
                             held.discard(event.code)
+                        if event.code in _BUMPER_TRIGGER_BTNS:
+                            state = "DOWN" if event.value == 1 else "UP"
+                            print(f"[{device.name}] {_BUMPER_TRIGGER_BTNS[event.code]} {state}")
                     elif event.type == ecodes.EV_ABS and event.code in self._trigger_max.get(path, {}):
                         axis_map = self._trigger_values.setdefault(path, {})
                         prev = axis_map.get(event.code, 0)
                         axis_map[event.code] = event.value
-                        # Only re-check when the axis crosses the per-device activation threshold
-                        axis_max = self._trigger_max.get(path, {}).get(event.code, 255)
-                        threshold = axis_max * TRIGGER_THRESHOLD_FRACTION
-                        if event.value >= threshold and prev < threshold:
-                            combo_check_needed = True
+                        # Print analog trigger value changes
+                        if event.value != prev:
+                            axis_name = ecodes.ABS.get(event.code, str(event.code))
+                            if isinstance(axis_name, list):
+                                axis_name = axis_name[0]
+                            tmax = self._trigger_max[path][event.code]
+                            print(f"[{device.name}] {axis_name} ({event.code}) value={event.value}/{tmax}")
 
-                if combo_check_needed:
-                    await self._check_combo(path)
+                # Always check combo state after reading events.  Previously this was
+                # gated on combo_check_needed (set only on key-down or threshold
+                # crossing), which meant that if the user pressed a combo during the
+                # post-connect ignore window and kept holding, no new events would
+                # re-set the flag and the combo would never fire.  Calling unconditionally
+                # ensures it fires within one poll cycle after the ignore window expires.
+                await self._check_combo(path)
 
             except OSError:
                 # Device was removed mid-read
@@ -341,5 +382,13 @@ class EvdevMonitor:
                 self._trigger_values.pop(path, None)
                 self._trigger_max.pop(path, None)
                 self._ignore_until.pop(path, None)
+                self._button_press_time.pop(path, None)
             except Exception:
                 pass
+
+        # For quiet devices (no constant ABS noise) that weren't readable this cycle
+        # but still have inputs held, check the combo so a hold pressed during the
+        # ignore window fires as soon as the window expires.
+        for path, held in list(self._held_buttons.items()):
+            if held and path not in readable_paths:
+                await self._check_combo(path)
