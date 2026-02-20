@@ -64,4 +64,4 @@ export type ControllerAction =
   | { type: 'CONTROLLER_UNREADY'; unique_id: string }
   | { type: 'BATTERY_UPDATE'; unique_id: string; battery_percent: number }
   | { type: 'REASSIGN' }
-  | { type: 'APPLY_CONFIG' }
+  | { type: 'APPLY_CONFIG'; emulatorTarget?: string | null }

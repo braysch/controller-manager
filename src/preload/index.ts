@@ -7,6 +7,7 @@ const api = {
     ipcRenderer.invoke('get-launch-paths') as Promise<{
       gameFolder: string | null
       emulatorFolder: string | null
+      emulatorTarget: string | null
     }>
 }
 

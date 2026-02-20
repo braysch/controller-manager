@@ -11,11 +11,13 @@ function App(): JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [gameFolder, setGameFolder] = useState<string | null>(null)
   const [emulatorFolder, setEmulatorFolder] = useState<string | null>(null)
+  const [emulatorTarget, setEmulatorTarget] = useState<string | null>(null)
 
   useEffect(() => {
-    window.api.getLaunchPaths().then(({ gameFolder, emulatorFolder }) => {
+    window.api.getLaunchPaths().then(({ gameFolder, emulatorFolder, emulatorTarget }) => {
       setGameFolder(gameFolder)
       setEmulatorFolder(emulatorFolder)
+      setEmulatorTarget(emulatorTarget)
     })
   }, [])
   const { connected, ready, dispatch } = useControllers()
@@ -26,7 +28,7 @@ function App(): JSX.Element {
     clearBluetoothDevices,
     poppingControllers
   } = useWebSocket(dispatch, () => {
-    if (ready.length > 0) dispatch({ type: 'APPLY_CONFIG' })
+    if (ready.length > 0) dispatch({ type: 'APPLY_CONFIG', emulatorTarget })
   })
 
   return (
@@ -50,7 +52,7 @@ function App(): JSX.Element {
 
       <BottomButtons
         onReassign={() => dispatch({ type: 'REASSIGN' })}
-        onOkay={() => dispatch({ type: 'APPLY_CONFIG' })}
+        onOkay={() => dispatch({ type: 'APPLY_CONFIG', emulatorTarget })}
         onBack={() => window.close()}
         hasReady={ready.length > 0}
         gameFolder={gameFolder}

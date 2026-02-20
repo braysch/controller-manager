@@ -15,6 +15,7 @@ from models import (
     ControllerProfileUpdate,
     EmulatorConfigUpdate,
     MoveToReadyRequest,
+    ApplyConfigRequest,
 )
 from controllers.state_manager import StateManager
 from controllers.evdev_monitor import EvdevMonitor
@@ -22,6 +23,7 @@ from controllers.device_matcher import SDLInfo
 from bluetooth.bluez_manager import BlueZManager
 from battery.battery_monitor import BatteryMonitor
 from emulators.yuzu import YuzuConfigWriter
+from emulators.dolphin import DolphinGCWriter, DolphinWiiWriter
 
 
 # --- WebSocket connection manager ---
@@ -56,6 +58,8 @@ evdev_monitor = EvdevMonitor()
 bluez_manager = BlueZManager()
 battery_monitor = BatteryMonitor()
 yuzu_writer = YuzuConfigWriter()
+dolphin_gc_writer = DolphinGCWriter()
+dolphin_wii_writer = DolphinWiiWriter()
 
 
 # --- Callbacks ---
@@ -314,9 +318,41 @@ async def update_emulator(name: str, update: EmulatorConfigUpdate):
     return {"error": "Emulator not found"}
 
 
+def _is_wiimote(controller) -> bool:
+    """Return True if this controller should be mapped as a Wiimote.
+
+    Matches actual Wiimotes (Nintendo vendor + product) and anything whose
+    evdev name contains 'wiimote' or 'wii remote'.
+    """
+    if controller.vendor_id == 0x057E and controller.product_id == 0x0306:
+        return True
+    name_lower = controller.name.lower()
+    return "wiimote" in name_lower or "wii remote" in name_lower
+
+
+def _build_dolphin_sdl_info(r) -> SDLInfo | None:
+    if r.port is None:
+        return None
+    return SDLInfo(
+        guid=r.guid or "",
+        port=r.port,
+        vendor_id=r.vendor_id or 0,
+        product_id=r.product_id or 0,
+        device_name=r.name,
+    )
+
+
 @app.post("/api/emulators/apply")
-async def apply_config():
-    """Write controller config to all enabled emulators."""
+async def apply_config(req: ApplyConfigRequest = ApplyConfigRequest()):
+    """Write controller config to enabled emulators. If req.emulator is set, only that one.
+
+    Special values for req.emulator:
+      "dolphin"     – writes both GCPadNew.ini and WiimoteNew.ini, routing each
+                      ready controller to the right file based on whether it is a
+                      Wiimote (vendor 0x057E / product 0x0306, or name match).
+      "dolphin_gc"  – writes only GCPadNew.ini with all ready controllers.
+      "dolphin_wii" – writes only WiimoteNew.ini with all ready controllers.
+    """
     ready = state_manager.get_ready_list()
     if not ready:
         return {"error": "No controllers ready"}
@@ -328,9 +364,17 @@ async def apply_config():
         if not emu.enabled:
             continue
 
+        # Filter by requested emulator.
+        # "dolphin" is a virtual alias that covers both dolphin_gc and dolphin_wii.
+        if req.emulator is not None:
+            if req.emulator == "dolphin":
+                if emu.emulator_name not in ("dolphin_gc", "dolphin_wii"):
+                    continue
+            elif emu.emulator_name != req.emulator:
+                continue
+
         if emu.emulator_name == "yuzu":
-            # Build SDLInfo from the ready controllers' stored guid
-            # Port = per-GUID index (position among devices sharing the same GUID)
+            # Yuzu uses GUID + per-GUID port index
             guid_counts: dict[str, int] = {}
             controllers_with_info = []
             for r in ready:
@@ -342,12 +386,30 @@ async def apply_config():
                         port=port,
                         vendor_id=r.vendor_id or 0,
                         product_id=r.product_id or 0,
+                        device_name=r.name,
                     )
                     controllers_with_info.append((r.unique_id, sdl_info))
                 else:
                     controllers_with_info.append((r.unique_id, None))
-
             success = yuzu_writer.write_config(emu.config_path, controllers_with_info)
+            results[emu.emulator_name] = "ok" if success else "error"
+
+        elif emu.emulator_name in ("dolphin_gc", "dolphin_wii"):
+            # When called via the "dolphin" alias, route controllers by type.
+            # When called directly, pass all ready controllers unchanged.
+            if req.emulator == "dolphin":
+                if emu.emulator_name == "dolphin_gc":
+                    filtered = [r for r in ready if not _is_wiimote(r)]
+                else:
+                    filtered = [r for r in ready if _is_wiimote(r)]
+            else:
+                filtered = ready
+
+            controllers_with_info = [
+                (r.unique_id, _build_dolphin_sdl_info(r)) for r in filtered
+            ]
+            writer = dolphin_gc_writer if emu.emulator_name == "dolphin_gc" else dolphin_wii_writer
+            success = writer.write_config(emu.config_path, controllers_with_info)
             results[emu.emulator_name] = "ok" if success else "error"
 
     return {"results": results}

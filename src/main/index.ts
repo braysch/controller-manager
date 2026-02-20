@@ -4,14 +4,20 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { PythonManager } from './python-manager'
 import fs from 'fs'
 
-function getLaunchPaths(): { gameFolder: string | null; emulatorFolder: string | null } {
+function getLaunchPaths(): {
+  gameFolder: string | null
+  emulatorFolder: string | null
+  emulatorTarget: string | null
+} {
   // Filter out the executable itself, Electron/Chromium flags, and dev-mode script paths
   const positional = process.argv
     .slice(1)
     .filter((arg) => !arg.startsWith('-') && !arg.endsWith('.js') && !arg.includes('app.asar'))
+  const emulatorFlag = process.argv.find((arg) => arg.startsWith('--emulator='))
   return {
     gameFolder: positional[0] ?? null,
     emulatorFolder: positional[1] ?? null,
+    emulatorTarget: emulatorFlag ? emulatorFlag.split('=')[1] : null,
   }
 }
 

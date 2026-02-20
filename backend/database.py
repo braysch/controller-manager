@@ -66,6 +66,8 @@ SEED_TYPE_DEFAULTS = [
 
 SEED_EMULATORS = [
     ("yuzu", "~/.var/app/org.yuzu_emu.yuzu/config/yuzu/qt-config.ini"),
+    ("dolphin_gc", "~/.var/app/org.DolphinEmu.dolphin-emu/config/dolphin-emu/GCPadNew.ini"),
+    ("dolphin_wii", "~/.var/app/org.DolphinEmu.dolphin-emu/config/dolphin-emu/WiimoteNew.ini"),
 ]
 
 

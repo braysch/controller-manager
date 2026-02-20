@@ -77,7 +77,7 @@ export function useControllers() {
         return
       }
       if (action.type === 'APPLY_CONFIG') {
-        api.applyConfig()
+        api.applyConfig(action.emulatorTarget)
           .then(() => window.api.quitAndLaunch())
           .catch(console.error)
         return

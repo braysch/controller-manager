@@ -69,6 +69,10 @@ class EmulatorConfigUpdate(BaseModel):
     enabled: Optional[bool] = None
 
 
+class ApplyConfigRequest(BaseModel):
+    emulator: Optional[str] = None
+
+
 class ControllerTypeDefault(BaseModel):
     name_pattern: str
     img_src: str = "default.png"

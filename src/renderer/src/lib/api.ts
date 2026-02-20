@@ -54,7 +54,11 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(data)
     }),
-  applyConfig: () => request('/emulators/apply', { method: 'POST' }),
+  applyConfig: (emulator?: string | null) =>
+    request('/emulators/apply', {
+      method: 'POST',
+      body: JSON.stringify({ emulator: emulator ?? null }),
+    }),
 
   getImages: () => request<string[]>('/assets/images'),
   getSounds: () => request<string[]>('/assets/sounds')

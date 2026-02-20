@@ -5,7 +5,11 @@ declare global {
     electron: ElectronAPI
     api: {
       quitAndLaunch: () => void
-      getLaunchPaths: () => Promise<{ gameFolder: string | null; emulatorFolder: string | null }>
+      getLaunchPaths: () => Promise<{
+        gameFolder: string | null
+        emulatorFolder: string | null
+        emulatorTarget: string | null
+      }>
     }
   }
 }
