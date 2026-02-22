@@ -407,21 +407,15 @@ class BlueZManager:
                 device.Pair()
             except Exception as e:
                 error_name = getattr(e, "get_dbus_name", lambda: "")()
-                is_already_exists = "AlreadyExists" in str(error_name) or "AlreadyExists" in str(e)
-                if is_already_exists:
-                    # Check whether BlueZ considers the device actually connected
-                    try:
-                        connected_var = dbus_props.Get("org.bluez.Device1", "Connected")
-                        connected = connected_var.unpack() if hasattr(connected_var, "unpack") else bool(connected_var)
-                    except Exception:
-                        connected = False
-
-                    if not connected and _allow_force_retry:
-                        print(f"[BlueZ] {address} AlreadyExists but not connected — removing and retrying...")
-                        return await self.force_pair_device(address)
-                    # Already paired and connected, or retry disabled — fall through to Connect
-                else:
+                is_already_exists = (
+                    "AlreadyExists" in str(error_name)
+                    or "AlreadyExists" in str(e)
+                    or "Already Exists" in str(e)
+                )
+                if not is_already_exists:
                     raise
+                # Device is already paired — fall through to Connect below
+                print(f"[BlueZ] {address} already paired, attempting to connect...")
 
             # Connect
             try:
