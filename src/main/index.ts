@@ -3,6 +3,7 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { PythonManager } from './python-manager'
 import fs from 'fs'
+import * as path from 'path'
 
 function getLaunchPaths(): {
   gameFolder: string | null
@@ -73,6 +74,16 @@ app.whenReady().then(() => {
   ipcMain.on('quit-and-launch', () => {
     fs.writeFileSync('/tmp/controller-manager-launch', '')
     app.quit()
+  })
+
+  ipcMain.handle('read-metadata', async (_, gameFolder: string) => {
+    try {
+      const filePath = path.join(gameFolder, 'metadata.pegasus.txt')
+      const content = fs.readFileSync(filePath, 'utf-8')
+      return { success: true, content, path: filePath }
+    } catch (error) {
+      return { success: false, error: String(error), path: '' }
+    }
   })
 
   pythonManager = new PythonManager()

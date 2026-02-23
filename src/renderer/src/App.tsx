@@ -45,7 +45,7 @@ function App(): JSX.Element {
         />
         <div className='flex h-full justify-center items-center w-full'>
           <div className='w-[1200px]'>
-        <ReadyGrid controllers={ready} poppingControllers={poppingControllers} />
+        <ReadyGrid controllers={ready} poppingControllers={poppingControllers} gameFolder={gameFolder} />
         </div>
         </div>
       </div>
