@@ -13,7 +13,7 @@ export default function ReadySlot({ controller, slotIndex, poppingControllers }:
   if (!controller) {
     return (
       <div className="flex flex-col items-center mb-8">
-        <div className="flex items-center justify-center rounded-xl border-2 border-dashed border-gray-700 bg-gray-800/30 w-full aspect-square">
+        <div className="flex items-center justify-center rounded-xl border-2 border-dashed border-gray-700 bg-gray-800/30 w-full max-w-[400px] aspect-square">
           <span className="text-gray-600 text-lg font-bold">P{slotIndex + 1}</span>
         </div>
       </div>

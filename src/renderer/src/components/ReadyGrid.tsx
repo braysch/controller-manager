@@ -37,17 +37,25 @@ export default function ReadyGrid({ controllers, poppingControllers, gameFolder 
     }
   }, [gameFolder])
 
-  const TOTAL_SLOTS = playerCount ?? 8
+  const TOTAL_SLOTS = playerCount ?? 1
   const slots = Array.from({ length: TOTAL_SLOTS }, (_, i) => controllers[i] ?? null)
 
+  const gridCols = TOTAL_SLOTS <= 4 ? TOTAL_SLOTS : 4
+  const gridRows = Math.ceil(TOTAL_SLOTS / 4)
+
   return (
-    <div>
-      <div className="flex-1">
-        <div className={`grid grid-cols-${TOTAL_SLOTS <= 4 ? TOTAL_SLOTS : 4} ${TOTAL_SLOTS > 4 ? 'grid-rows-2' : 'grid-rows-1'} gap-y-3 gap-x-9 h-full`}>
-          {slots.map((controller, index) => (
-            <ReadySlot key={index} controller={controller} slotIndex={index} poppingControllers={poppingControllers} />
-          ))}
-        </div>
+    <div className="flex-1">
+      <div 
+        className="gap-y-3 gap-x-9 h-full"
+        style={{ 
+          display: 'grid',
+          gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))`,
+          gridTemplateRows: `repeat(${gridRows}, minmax(0, 1fr))`
+        }}
+      >
+        {slots.map((controller, index) => (
+          <ReadySlot key={index} controller={controller} slotIndex={index} poppingControllers={poppingControllers} />
+        ))}
       </div>
     </div>
   )
