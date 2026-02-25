@@ -240,6 +240,27 @@ async def update_profile(unique_id: str, update: ControllerProfileUpdate):
     return {"error": "Profile not found"}
 
 
+class StartButtonUpdate(BaseModel):
+    tr2_is_start: bool
+
+
+@app.put("/api/profiles/{unique_id}/start-button")
+async def update_profile_start_button(unique_id: str, update: StartButtonUpdate):
+    profile = await database.get_profile(unique_id)
+    if not profile:
+        return {"error": "Profile not found"}
+    start_button = database._BTN_TR2 if update.tr2_is_start else None
+    success = await database.update_type_default_start_button(
+        profile.vendor_id, profile.product_id, profile.default_name, start_button
+    )
+    if success:
+        evdev_monitor.update_start_button_for_type(
+            profile.vendor_id, profile.product_id, profile.default_name, start_button
+        )
+        return {"status": "updated", "tr2_is_start": update.tr2_is_start}
+    return {"error": "Update failed"}
+
+
 # --- Bluetooth endpoints ---
 
 @app.post("/api/bluetooth/scan")

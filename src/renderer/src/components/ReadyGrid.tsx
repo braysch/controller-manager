@@ -37,7 +37,7 @@ export default function ReadyGrid({ controllers, poppingControllers, gameFolder 
     }
   }, [gameFolder])
 
-  const TOTAL_SLOTS = playerCount ?? 1
+  const TOTAL_SLOTS = playerCount ?? 8
   const slots = Array.from({ length: TOTAL_SLOTS }, (_, i) => controllers[i] ?? null)
 
   const gridCols = TOTAL_SLOTS <= 4 ? TOTAL_SLOTS : 4

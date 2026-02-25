@@ -11,6 +11,7 @@ class ControllerProfile(BaseModel):
     vendor_id: Optional[int] = None
     product_id: Optional[int] = None
     guid_override: Optional[str] = None
+    start_button: Optional[int] = None  # Inherited from controller type default
 
 
 class ControllerProfileUpdate(BaseModel):
@@ -80,3 +81,4 @@ class ControllerTypeDefault(BaseModel):
     vendor_id: Optional[int] = None
     product_id: Optional[int] = None
     guid_override: Optional[str] = None
+    start_button: Optional[int] = None  # None means use BTN_START; set to BTN_TR2 (313) where applicable

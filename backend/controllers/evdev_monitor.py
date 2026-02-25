@@ -8,6 +8,7 @@ import time
 from typing import Callable, Optional
 
 from evdev import InputDevice, ecodes, list_devices
+from database import get_type_default
 
 # Fraction of an axis's maximum value that both triggers must reach to fire the combo.
 # e.g. 0.5 means each trigger must be pressed at least halfway (512/1023 for Xbox).
@@ -64,9 +65,36 @@ class EvdevMonitor:
         self._button_press_time: dict[str, dict[int, float]] = {}
         # Analog axes that have already crossed the input threshold (rising-edge only)
         self._input_axis_triggered: dict[str, set[int]] = {}
+        # Start button code per device (defaults to BTN_START; overridden per profile)
+        self._start_button: dict[str, int] = {}
 
     def stop(self):
         self._running = False
+
+    def update_start_button_for_type(
+        self,
+        vendor_id: Optional[int],
+        product_id: Optional[int],
+        default_name: str,
+        start_button: Optional[int],
+    ) -> None:
+        """Refresh the cached start button for all currently connected devices of a given type.
+
+        Called immediately after a user changes the setting in the GUI so the
+        change takes effect without requiring a reconnect.
+        """
+        btn = start_button if start_button is not None else ecodes.BTN_START
+        for path, device in list(self._devices.items()):
+            try:
+                info = self._get_device_info(device)
+                if vendor_id is not None and product_id is not None:
+                    if info["vendor_id"] == vendor_id and info["product_id"] == product_id:
+                        self._start_button[path] = btn
+                else:
+                    if default_name.lower() in device.name.lower():
+                        self._start_button[path] = btn
+            except Exception:
+                pass
 
     @staticmethod
     def _compute_sdl_guid(device: InputDevice) -> str:
@@ -176,6 +204,13 @@ class EvdevMonitor:
                         self._button_press_time[path] = {}
                         self._input_axis_triggered[path] = set()
 
+                        # Look up the start button for this controller type
+                        try:
+                            type_default = await get_type_default(device.name, info["vendor_id"], info["product_id"])
+                            self._start_button[path] = type_default.start_button if (type_default and type_default.start_button) else ecodes.BTN_START
+                        except Exception:
+                            self._start_button[path] = ecodes.BTN_START
+
                         if self.on_connected:
                             await self.on_connected(info)
 
@@ -195,6 +230,7 @@ class EvdevMonitor:
                     self._ignore_until.pop(path, None)
                     self._button_press_time.pop(path, None)
                     self._input_axis_triggered.pop(path, None)
+                    self._start_button.pop(path, None)
                     if self.on_disconnected:
                         await self.on_disconnected(path)
                     print(f"[EvdevMonitor] Disconnected: {path}")
@@ -329,6 +365,7 @@ class EvdevMonitor:
             self._ignore_until.pop(path, None)
             self._button_press_time.pop(path, None)
             self._input_axis_triggered.pop(path, None)
+            self._start_button.pop(path, None)
 
         if not fd_map:
             return
@@ -359,7 +396,7 @@ class EvdevMonitor:
                             self._button_press_time.setdefault(path, {})[event.code] = time.monotonic()
                             if self.on_input:
                                 await self.on_input(path)
-                            if event.code == ecodes.BTN_START and self.on_start_pressed:
+                            if event.code == self._start_button.get(path, ecodes.BTN_START) and self.on_start_pressed:
                                 await self.on_start_pressed(path)
                         elif event.value == 0:  # key up
                             held.discard(event.code)
@@ -404,6 +441,7 @@ class EvdevMonitor:
                 self._ignore_until.pop(path, None)
                 self._button_press_time.pop(path, None)
                 self._input_axis_triggered.pop(path, None)
+                self._start_button.pop(path, None)
             except Exception:
                 pass
 

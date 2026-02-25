@@ -29,6 +29,7 @@ export interface ControllerProfile {
   vendor_id?: number
   product_id?: number
   guid_override?: string
+  start_button?: number
 }
 
 export interface EmulatorConfig {

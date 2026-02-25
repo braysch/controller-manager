@@ -60,6 +60,12 @@ export const api = {
       body: JSON.stringify({ emulator: emulator ?? null }),
     }),
 
+  updateProfileStartButton: (unique_id: string, tr2IsStart: boolean) =>
+    request(`/profiles/${encodeURIComponent(unique_id)}/start-button`, {
+      method: 'PUT',
+      body: JSON.stringify({ tr2_is_start: tr2IsStart })
+    }),
+
   getImages: () => request<string[]>('/assets/images'),
   getSounds: () => request<string[]>('/assets/sounds')
 }

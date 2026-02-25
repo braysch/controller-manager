@@ -3,7 +3,7 @@ from typing import Optional
 from config import DB_PATH
 from models import ControllerProfile, ControllerTypeDefault, EmulatorConfig
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 CREATE_TABLES = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -39,29 +39,36 @@ CREATE TABLE IF NOT EXISTS controller_type_defaults (
     vendor_id INTEGER,
     product_id INTEGER,
     guid_override TEXT,
+    start_button INTEGER,
     UNIQUE(name_pattern, vendor_id, product_id)
 );
 """
 
-# Seed data: (name_pattern, img_src, snd_src, vendor_id, product_id, guid_override)
+# Seed data: (name_pattern, img_src, snd_src, vendor_id, product_id, guid_override, start_button)
 # guid_override: hardcoded SDL2 GUID for controllers where evdev GUID doesn't match
 # (e.g. BT controllers where SDL2 uses HIDAPI and generates a different GUID)
+# start_button: evdev button code for the "start software" button; None defaults to BTN_START (315).
+#   Use BTN_TR2 (313) for controllers where the Start/+ button maps to that code.
+_BTN_START = 315
+_BTN_TR2 = 313
 SEED_TYPE_DEFAULTS = [
-    ("Xbox Wireless Controller", "xbox-one.png", "xbox-one.mp3", 0x045E, 0x0B13, None),
-    ("Xbox One Controller", "xbox-one.png", "xbox-one.mp3", 0x045E, 0x02EA, None),
-    ("Xbox Controller", "xbox-one.png", "xbox-one.mp3", 0x045E, 0x0B12, None),
-    ("Switch Pro Controller", "switch_pro.png", "switch.mp3", 0x057E, 0x2009, None),
-    ("Joy-Con (L)", "joycon_l.png", "switch.mp3", 0x057E, 0x2006, None),
-    ("Joy-Con (R)", "joycon_r.png", "switch.mp3", 0x057E, 0x2007, None),
-    ("Joy-Con (L+R)", "joycon_l.png", "switch.mp3", None, None, None),
-    ("GameCube Controller Adapter", "gamecube.png", "switch_gamecube.mp3", 0x057E, 0x0337, None),
+    ("Xbox Wireless Controller", "xbox-one.png", "xbox-one.mp3", 0x045E, 0x0B13, None, None),
+    ("Xbox One Controller", "xbox-one.png", "xbox-one.mp3", 0x045E, 0x02EA, None, None),
+    ("Xbox Controller", "xbox-one.png", "xbox-one.mp3", 0x045E, 0x0B12, None, None),
+    ("Switch Pro Controller", "switch_pro.png", "switch.mp3", 0x057E, 0x2009, None, None),
+    ("Joy-Con (L)", "joycon_l.png", "switch.mp3", 0x057E, 0x2006, None, None),
+    ("Joy-Con (R)", "joycon_r.png", "switch.mp3", 0x057E, 0x2007, None, None),
+    ("Joy-Con (L+R)", "joycon_l.png", "switch.mp3", None, None, None, None),
+    ("GameCube Controller Adapter", "gamecube.png", "switch_gamecube.mp3", 0x057E, 0x0337, None, None),
     # Lic Pro Controller: BT HID reports vendor=0/product=0, but SDL2 HIDAPI
-    # identifies it as a Switch Pro Controller with this GUID
-    ("Lic Pro Controller", "switch_gamecube.png", "switch_gamecube.mp3", None, None, "030000007e0500000920000000006806"),
-    ("DualShock 4", "default.png", "default.mp3", 0x054C, 0x09CC, None),
-    ("DualSense", "default.png", "default.mp3", 0x054C, 0x0CE6, None),
-    ("SNES Controller", "snes.png", "snes.wav", 0x057E, 0x2017, None),
-    ("8BitDo", "default.png", "default.mp3", None, None, None),
+    # identifies it as a Switch Pro Controller with this GUID.
+    # BTN_TR2 is the Start/+ button on this controller.
+    ("Lic Pro Controller", "switch_gamecube.png", "switch_gamecube.mp3", None, None, "030000007e0500000920000000006806", _BTN_TR2),
+    ("DualShock 4", "default.png", "default.mp3", 0x054C, 0x09CC, None, None),
+    ("DualSense", "default.png", "default.mp3", 0x054C, 0x0CE6, None, None),
+    # SNES Controller: BTN_TR2 is the Start/+ button on this controller.
+    ("SNES Controller", "snes.png", "snes.wav", 0x057E, 0x2017, None, _BTN_TR2),
+    ("8BitDo", "default.png", "default.mp3", None, None, None, None),
 ]
 
 SEED_EMULATORS = [
@@ -124,6 +131,16 @@ async def _migrate(db: aiosqlite.Connection) -> None:
         except Exception:
             pass
 
+        needs_type_start_button = False
+        try:
+            cursor = await db.execute("PRAGMA table_info(controller_type_defaults)")
+            columns = await cursor.fetchall()
+            col_names = [c[1] for c in columns]
+            if columns and "start_button" not in col_names:
+                needs_type_start_button = True
+        except Exception:
+            pass
+
         if needs_type_rebuild:
             await db.execute("DROP TABLE IF EXISTS controller_type_defaults")
 
@@ -132,6 +149,19 @@ async def _migrate(db: aiosqlite.Connection) -> None:
         if needs_controller_guid:
             try:
                 await db.execute("ALTER TABLE controllers ADD COLUMN guid_override TEXT")
+            except Exception:
+                pass
+
+        if needs_type_start_button:
+            try:
+                await db.execute("ALTER TABLE controller_type_defaults ADD COLUMN start_button INTEGER")
+                # Backfill BTN_TR2 for controllers that need it
+                for name_pattern, *_, start_button in SEED_TYPE_DEFAULTS:
+                    if start_button is not None:
+                        await db.execute(
+                            "UPDATE controller_type_defaults SET start_button = ? WHERE name_pattern = ?",
+                            (start_button, name_pattern),
+                        )
             except Exception:
                 pass
 
@@ -144,10 +174,10 @@ async def _migrate(db: aiosqlite.Connection) -> None:
         await db.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
 
     # Seed type defaults
-    for name_pattern, img_src, snd_src, vendor_id, product_id, guid_override in SEED_TYPE_DEFAULTS:
+    for name_pattern, img_src, snd_src, vendor_id, product_id, guid_override, start_button in SEED_TYPE_DEFAULTS:
         await db.execute(
-            "INSERT OR IGNORE INTO controller_type_defaults (name_pattern, img_src, snd_src, vendor_id, product_id, guid_override) VALUES (?, ?, ?, ?, ?, ?)",
-            (name_pattern, img_src, snd_src, vendor_id, product_id, guid_override),
+            "INSERT OR IGNORE INTO controller_type_defaults (name_pattern, img_src, snd_src, vendor_id, product_id, guid_override, start_button) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (name_pattern, img_src, snd_src, vendor_id, product_id, guid_override, start_button),
         )
 
     # Seed emulator configs
@@ -339,7 +369,7 @@ async def get_all_profiles() -> list[ControllerProfile]:
             "SELECT unique_id, default_name, custom_name, img_src, snd_src, vendor_id, product_id, guid_override FROM controllers ORDER BY id"
         )
         rows = await cursor.fetchall()
-        return [
+        profiles = [
             ControllerProfile(
                 unique_id=r[0],
                 default_name=r[1],
@@ -352,6 +382,60 @@ async def get_all_profiles() -> list[ControllerProfile]:
             )
             for r in rows
         ]
+
+        # Enrich profiles with start_button from their matching type default
+        td_cursor = await db.execute(
+            "SELECT vendor_id, product_id, name_pattern, start_button FROM controller_type_defaults"
+        )
+        type_defaults = await td_cursor.fetchall()
+        vid_pid_map = {(r[0], r[1]): r[3] for r in type_defaults if r[0] is not None}
+        name_map = [(r[2].lower(), r[3]) for r in type_defaults if r[0] is None]
+
+        for p in profiles:
+            if p.vendor_id is not None and p.product_id is not None:
+                p.start_button = vid_pid_map.get((p.vendor_id, p.product_id))
+            else:
+                for name_pattern, start_btn in name_map:
+                    if name_pattern in p.default_name.lower():
+                        p.start_button = start_btn
+                        break
+
+        return profiles
+    finally:
+        await db.close()
+
+
+async def update_type_default_start_button(
+    vendor_id: Optional[int],
+    product_id: Optional[int],
+    default_name: str,
+    start_button: Optional[int],
+) -> bool:
+    """Set the start_button for the type default that matches this controller."""
+    db = await get_db()
+    try:
+        if vendor_id is not None and product_id is not None:
+            await db.execute(
+                "UPDATE controller_type_defaults SET start_button = ? WHERE vendor_id = ? AND product_id = ?",
+                (start_button, vendor_id, product_id),
+            )
+        else:
+            # Find matching name_pattern for null vendor/product types (e.g. Lic Pro Controller)
+            cursor = await db.execute(
+                "SELECT name_pattern FROM controller_type_defaults WHERE vendor_id IS NULL"
+            )
+            name_rows = await cursor.fetchall()
+            for row in name_rows:
+                if row[0].lower() in default_name.lower():
+                    await db.execute(
+                        "UPDATE controller_type_defaults SET start_button = ? WHERE name_pattern = ? AND vendor_id IS NULL",
+                        (start_button, row[0]),
+                    )
+                    break
+        await db.commit()
+        return True
+    except Exception:
+        return False
     finally:
         await db.close()
 
@@ -367,7 +451,7 @@ async def get_type_default(
         # First try vendor:product match (most reliable)
         if vendor_id is not None and product_id is not None:
             cursor = await db.execute(
-                "SELECT name_pattern, img_src, snd_src, vendor_id, product_id, guid_override FROM controller_type_defaults WHERE vendor_id = ? AND product_id = ?",
+                "SELECT name_pattern, img_src, snd_src, vendor_id, product_id, guid_override, start_button FROM controller_type_defaults WHERE vendor_id = ? AND product_id = ?",
                 (vendor_id, product_id),
             )
             row = await cursor.fetchone()
@@ -379,11 +463,12 @@ async def get_type_default(
                     vendor_id=row[3],
                     product_id=row[4],
                     guid_override=row[5],
+                    start_button=row[6],
                 )
 
         # Fallback to name pattern matching
         cursor = await db.execute(
-            "SELECT name_pattern, img_src, snd_src, vendor_id, product_id, guid_override FROM controller_type_defaults WHERE vendor_id IS NULL"
+            "SELECT name_pattern, img_src, snd_src, vendor_id, product_id, guid_override, start_button FROM controller_type_defaults WHERE vendor_id IS NULL"
         )
         rows = await cursor.fetchall()
         for row in rows:
@@ -395,6 +480,7 @@ async def get_type_default(
                     vendor_id=row[3],
                     product_id=row[4],
                     guid_override=row[5],
+                    start_button=row[6],
                 )
         return None
     finally:

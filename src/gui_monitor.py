@@ -8,6 +8,13 @@ from PIL import Image, ImageTk
 import os
 import pygame
 
+# (vendor_id, product_id) pairs where BTN_TR2 is the Start/+ button, not a trigger
+_BTN_TR2_START_VID_PID: set[tuple[int, int]] = {
+    (0x057E, 0x2017),  # SNES Controller
+}
+# Device name patterns (lowercase) for controllers with no vendor/product where BTN_TR2 is Start/+
+_BTN_TR2_START_NAMES = ("lic pro controller",)
+
 
 class GUIMonitor:
     def __init__(self, root):
@@ -67,6 +74,7 @@ class GUIMonitor:
         self.connected_devices = {}  # path -> name mapping
         self.ready_devices = {}      # path -> {'name': str, 'img_src': str, 'snd_src': str} mapping
         self.known_devices = set()   # set of paths we've seen
+        self._start_buttons: dict[str, int] = {}  # path -> start button code
         
         # Database connection (you may need to add this)
         self.controller_db = {}  # path -> {'name': str, 'img_src': str, 'snd_src': str}
@@ -411,12 +419,19 @@ class GUIMonitor:
                     if device.path not in self.known_devices:
                         self.known_devices.add(device.path)
                         self.add_connected_device(device.name, device.path)
-                
+                        vid, pid = device.info.vendor, device.info.product
+                        tr2_is_start = (
+                            (vid, pid) in _BTN_TR2_START_VID_PID
+                            or any(p in device.name.lower() for p in _BTN_TR2_START_NAMES)
+                        )
+                        self._start_buttons[device.path] = ecodes.BTN_TR2 if tr2_is_start else ecodes.BTN_START
+
                 # Remove disconnected devices
                 disconnected = self.known_devices - current_paths
                 for path in disconnected:
                     self.known_devices.remove(path)
                     self.remove_disconnected_device(path)
+                    self._start_buttons.pop(path, None)
                 
                 # Monitor for button presses on all connected devices
                 if devices:
@@ -431,7 +446,7 @@ class GUIMonitor:
                         device = device_readers[fd]
                         for event in device.read():
                             if event.type == ecodes.EV_KEY and event.value == 1:  # Key press
-                                if event.code in [ecodes.BTN_START, ecodes.BTN_TR2]:
+                                if event.code == self._start_buttons.get(device.path, ecodes.BTN_START):
                                     self.move_to_ready(device.path)
                 
                 await asyncio.sleep(0.1)

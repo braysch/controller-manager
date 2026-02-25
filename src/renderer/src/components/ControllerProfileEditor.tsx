@@ -15,6 +15,7 @@ export default function ControllerProfileEditor({ open }: ControllerProfileEdito
   const [editImg, setEditImg] = useState('')
   const [editSnd, setEditSnd] = useState('')
   const [editGuid, setEditGuid] = useState('')
+  const [editTr2IsStart, setEditTr2IsStart] = useState(false)
 
   useEffect(() => {
     if (!open) return
@@ -29,6 +30,7 @@ export default function ControllerProfileEditor({ open }: ControllerProfileEdito
     setEditImg(profile.img_src)
     setEditSnd(profile.snd_src)
     setEditGuid(profile.guid_override || '')
+    setEditTr2IsStart(profile.start_button === 313)
   }
 
   const saveEdit = async () => {
@@ -39,10 +41,18 @@ export default function ControllerProfileEditor({ open }: ControllerProfileEdito
       snd_src: editSnd,
       guid_override: editGuid || null
     })
+    await api.updateProfileStartButton(editing, editTr2IsStart)
     setProfiles(
       profiles.map((p) =>
         p.unique_id === editing
-          ? { ...p, custom_name: editName || undefined, img_src: editImg, snd_src: editSnd, guid_override: editGuid || undefined }
+          ? {
+              ...p,
+              custom_name: editName || undefined,
+              img_src: editImg,
+              snd_src: editSnd,
+              guid_override: editGuid || undefined,
+              start_button: editTr2IsStart ? 313 : undefined
+            }
           : p
       )
     )
@@ -99,6 +109,15 @@ export default function ControllerProfileEditor({ open }: ControllerProfileEdito
                       className="w-full bg-gray-700 rounded px-2 py-1 text-xs font-mono"
                     />
                   </div>
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={editTr2IsStart}
+                      onChange={(e) => setEditTr2IsStart(e.target.checked)}
+                      className="rounded"
+                    />
+                    <span className="text-xs text-gray-400">Use ZR/TR2 as Start button</span>
+                  </label>
                   <div className="flex gap-2">
                     <button
                       onClick={saveEdit}
@@ -131,6 +150,9 @@ export default function ControllerProfileEditor({ open }: ControllerProfileEdito
                     <div className="text-xs text-gray-500">{profile.unique_id}</div>
                     {profile.guid_override && (
                       <div className="text-xs text-yellow-500 font-mono">GUID: {profile.guid_override}</div>
+                    )}
+                    {profile.start_button === 313 && (
+                      <div className="text-xs text-blue-400">Start: ZR/TR2 button</div>
                     )}
                   </div>
                 </div>
