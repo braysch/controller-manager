@@ -3,7 +3,7 @@ from typing import Optional
 from config import DB_PATH
 from models import ControllerProfile, ControllerTypeDefault, EmulatorConfig
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 CREATE_TABLES = """
 CREATE TABLE IF NOT EXISTS schema_version (

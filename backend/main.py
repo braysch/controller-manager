@@ -339,6 +339,34 @@ async def update_emulator(name: str, update: EmulatorConfigUpdate):
     return {"error": "Emulator not found"}
 
 
+# Hardcoded SDL2 device names for Dolphin.
+# SDL2 may rename controllers via HIDAPI or gamecontrollerdb, producing a name
+# that differs from what evdev/kernel reports. Keyed by (vendor_id, product_id)
+# or by SDL2 GUID (used when vendor/product are 0, e.g. BT-HID controllers).
+_DOLPHIN_NAME_BY_VID_PID: dict[tuple[int, int], str] = {
+    (0x057E, 0x2009): "Nintendo Switch Pro Controller",
+    (0x045E, 0x0B13): "Xbox Series X Controller",
+}
+_DOLPHIN_NAME_BY_GUID: dict[str, str] = {
+    # Lic Pro Controller: BT-HID reports vendor=0/product=0 in evdev, but SDL2
+    # HIDAPI identifies it via this GUID as a Nintendo Switch Pro Controller.
+    "030000007e0500000920000000006806": "Nintendo Switch Pro Controller",
+}
+
+
+def _dolphin_sdl_name(r) -> str:
+    """Return the SDL2 device name Dolphin will use for this controller."""
+    if r.vendor_id and r.product_id:
+        name = _DOLPHIN_NAME_BY_VID_PID.get((r.vendor_id, r.product_id))
+        if name:
+            return name
+    if r.guid:
+        name = _DOLPHIN_NAME_BY_GUID.get(r.guid)
+        if name:
+            return name
+    return r.name
+
+
 def _is_wiimote(controller) -> bool:
     """Return True if this controller should be mapped as a Wiimote.
 
@@ -351,16 +379,29 @@ def _is_wiimote(controller) -> bool:
     return "wiimote" in name_lower or "wii remote" in name_lower
 
 
-def _build_dolphin_sdl_info(r) -> SDLInfo | None:
-    if r.port is None:
-        return None
-    return SDLInfo(
-        guid=r.guid or "",
-        port=r.port,
-        vendor_id=r.vendor_id or 0,
-        product_id=r.product_id or 0,
-        device_name=r.name,
-    )
+def _build_dolphin_controllers(
+    filtered: list,
+    sdl_name_counts: dict[str, int],
+) -> list[tuple]:
+    """Build (unique_id, SDLInfo) pairs for a Dolphin writer.
+
+    Uses the hardcoded SDL2 device name lookup rather than the evdev name, and
+    computes per-SDL-name port indices to match how Dolphin/SDL2 enumerates joysticks.
+    """
+    result = []
+    for r in filtered:
+        sdl_name = _dolphin_sdl_name(r)
+        port = sdl_name_counts.get(sdl_name, 0)
+        sdl_name_counts[sdl_name] = port + 1
+        sdl_info = SDLInfo(
+            guid=r.guid or "",
+            port=port,
+            vendor_id=r.vendor_id or 0,
+            product_id=r.product_id or 0,
+            device_name=sdl_name,
+        )
+        result.append((r.unique_id, sdl_info))
+    return result
 
 
 @app.post("/api/emulators/apply")
@@ -423,15 +464,21 @@ async def apply_config(req: ApplyConfigRequest = ApplyConfigRequest()):
                     filtered = [r for r in ready if not _is_wiimote(r)]
                 else:
                     filtered = [r for r in ready if _is_wiimote(r)]
+                # Share the per-alias counter across gc/wii so SDL indices stay consistent.
+                if "_dolphin_sdl_counts" not in results:
+                    results["_dolphin_sdl_counts"] = {}
+                sdl_counts = results["_dolphin_sdl_counts"]
             else:
                 filtered = ready
+                sdl_counts = {}
 
-            controllers_with_info = [
-                (r.unique_id, _build_dolphin_sdl_info(r)) for r in filtered
-            ]
+            controllers_with_info = _build_dolphin_controllers(filtered, sdl_counts)
             writer = dolphin_gc_writer if emu.emulator_name == "dolphin_gc" else dolphin_wii_writer
             success = writer.write_config(emu.config_path, controllers_with_info)
             results[emu.emulator_name] = "ok" if success else "error"
+
+    # Remove internal bookkeeping key before returning
+    results.pop("_dolphin_sdl_counts", None)
 
     return {"results": results}
 
@@ -452,20 +499,23 @@ async def list_sounds():
     return []
 
 
+_NO_CACHE = {"Cache-Control": "no-store"}
+
+
 @app.get("/assets/images/{filename}")
 async def serve_image(filename: str):
     path = config.IMAGES_DIR / filename
     if path.exists() and path.is_file():
-        return FileResponse(path)
-    return FileResponse(config.IMAGES_DIR / "default.png")
+        return FileResponse(path, headers=_NO_CACHE)
+    return FileResponse(config.IMAGES_DIR / "default.png", headers=_NO_CACHE)
 
 
 @app.get("/assets/sounds/{filename}")
 async def serve_sound(filename: str):
     path = config.SOUNDS_DIR / filename
     if path.exists() and path.is_file():
-        return FileResponse(path)
-    return FileResponse(config.SOUNDS_DIR / "default.mp3")
+        return FileResponse(path, headers=_NO_CACHE)
+    return FileResponse(config.SOUNDS_DIR / "default.mp3", headers=_NO_CACHE)
 
 
 @app.get("/assets/ui-sounds/{filename}")

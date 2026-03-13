@@ -12,6 +12,7 @@ function App(): JSX.Element {
   const [gameFolder, setGameFolder] = useState<string | null>(null)
   const [emulatorFolder, setEmulatorFolder] = useState<string | null>(null)
   const [emulatorTarget, setEmulatorTarget] = useState<string | null>(null)
+  const [manualEmulator, setManualEmulator] = useState<string>('yuzu')
 
   useEffect(() => {
     window.api.getLaunchPaths().then(({ gameFolder, emulatorFolder, emulatorTarget }) => {
@@ -20,6 +21,8 @@ function App(): JSX.Element {
       setEmulatorTarget(emulatorTarget)
     })
   }, [])
+
+  const activeEmulatorTarget = emulatorTarget ?? manualEmulator
   const { connected, ready, dispatch } = useControllers()
   const {
     connected: wsConnected,
@@ -28,7 +31,7 @@ function App(): JSX.Element {
     clearBluetoothDevices,
     poppingControllers
   } = useWebSocket(dispatch, () => {
-    if (ready.length > 0) dispatch({ type: 'APPLY_CONFIG', emulatorTarget })
+    if (ready.length > 0) dispatch({ type: 'APPLY_CONFIG', emulatorTarget: activeEmulatorTarget })
   })
 
   return (
@@ -52,11 +55,13 @@ function App(): JSX.Element {
 
       <BottomButtons
         onReassign={() => dispatch({ type: 'REASSIGN' })}
-        onOkay={() => dispatch({ type: 'APPLY_CONFIG', emulatorTarget })}
+        onOkay={() => dispatch({ type: 'APPLY_CONFIG', emulatorTarget: activeEmulatorTarget })}
         onBack={() => window.close()}
         hasReady={ready.length > 0}
         gameFolder={gameFolder}
         emulatorFolder={emulatorFolder}
+        manualEmulator={emulatorTarget === null ? manualEmulator : null}
+        onManualEmulatorChange={setManualEmulator}
       />
 
       <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />

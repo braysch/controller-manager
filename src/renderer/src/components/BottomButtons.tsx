@@ -1,5 +1,11 @@
 import Button from './Button'
 
+const EMULATOR_OPTIONS = [
+  { value: 'yuzu', label: 'Yuzu' },
+  { value: 'dolphin_gc', label: 'Dolphin (GC)' },
+  { value: 'dolphin_wii', label: 'Dolphin (Wii)' },
+]
+
 interface BottomButtonsProps {
   onBack: () => void
   onReassign: () => void
@@ -7,6 +13,8 @@ interface BottomButtonsProps {
   hasReady: boolean
   gameFolder: string | null
   emulatorFolder: string | null
+  manualEmulator: string | null
+  onManualEmulatorChange: (value: string) => void
 }
 
 export default function BottomButtons({
@@ -15,7 +23,9 @@ export default function BottomButtons({
   onOkay,
   hasReady,
   gameFolder,
-  emulatorFolder
+  emulatorFolder,
+  manualEmulator,
+  onManualEmulatorChange
 }: BottomButtonsProps): JSX.Element {
   return (
     <div className="flex items-center justify-center px-4 py-3 bg-gray-800 border-t border-gray-700">
@@ -34,7 +44,20 @@ export default function BottomButtons({
         </div>
       </div>
 
-      <div className="flex gap-2 flex-1 justify-end">
+      <div className="flex gap-2 flex-1 justify-end items-center">
+        {manualEmulator !== null && (
+          <select
+            value={manualEmulator}
+            onChange={(e) => onManualEmulatorChange(e.target.value)}
+            className="bg-gray-700 text-white text-xl rounded-sm px-3 py-2 border border-gray-600 cursor-pointer"
+          >
+            {EMULATOR_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        )}
         <Button onClick={onReassign} disabled={!hasReady}>
           Reset Grip/Order
         </Button>
