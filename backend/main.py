@@ -25,6 +25,7 @@ from bluetooth.bluez_manager import BlueZManager
 from battery.battery_monitor import BatteryMonitor
 from emulators.yuzu import YuzuConfigWriter
 from emulators.dolphin import DolphinGCWriter, DolphinWiiWriter
+from emulators.mesen import MesenConfigWriter
 
 
 # --- WebSocket connection manager ---
@@ -64,6 +65,7 @@ battery_monitor = BatteryMonitor()
 yuzu_writer = YuzuConfigWriter()
 dolphin_gc_writer = DolphinGCWriter()
 dolphin_wii_writer = DolphinWiiWriter()
+mesen_writer = MesenConfigWriter()
 
 
 # --- Callbacks ---
@@ -523,7 +525,22 @@ async def apply_config(req: ApplyConfigRequest = ApplyConfigRequest()):
             success = writer.write_config(emu.config_path, controllers_with_info)
             results[emu.emulator_name] = "ok" if success else "error"
 
-        elif emu.emulator_name in ("desmume", "mesen", "parallel"):
+        elif emu.emulator_name == "mesen":
+            # Mesen uses its own integer ID scheme
+            controllers_with_info = []
+            for r in ready:
+                sdl_info = SDLInfo(
+                    guid=r.guid or "",
+                    port=0, # Not used by MesenWriter yet
+                    vendor_id=r.vendor_id or 0,
+                    product_id=r.product_id or 0,
+                    device_name=r.name,
+                )
+                controllers_with_info.append((r.unique_id, sdl_info))
+            success = mesen_writer.write_config(emu.config_path, controllers_with_info)
+            results[emu.emulator_name] = "ok" if success else "error"
+
+        elif emu.emulator_name in ("desmume", "parallel"):
             # TODO: Implement specific writers for these emulators
             results[emu.emulator_name] = "ok"
 
