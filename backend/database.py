@@ -376,6 +376,17 @@ async def update_profile_fields(
     return await get_profile(unique_id)
 
 
+async def delete_profile(unique_id: str) -> bool:
+    """Delete a controller profile. Returns True if successful."""
+    db = await get_db()
+    try:
+        cursor = await db.execute("DELETE FROM controllers WHERE unique_id = ?", (unique_id,))
+        await db.commit()
+        return cursor.rowcount > 0
+    finally:
+        await db.close()
+
+
 async def get_all_profiles() -> list[ControllerProfile]:
     db = await get_db()
     try:

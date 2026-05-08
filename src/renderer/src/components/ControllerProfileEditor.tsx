@@ -64,6 +64,16 @@ export default function ControllerProfileEditor({ open }: ControllerProfileEdito
     setEditing(null)
   }
 
+  const deleteProfile = async (uniqueId: string) => {
+    if (!window.confirm('Are you sure you want to delete this profile? If the controller is connected, it will be reset to defaults.')) {
+      return
+    }
+    await api.deleteProfile(uniqueId)
+    const p = await api.getProfiles()
+    setProfiles(p as ControllerProfile[])
+    setEditing(null)
+  }
+
   return (
     <div>
       <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">
@@ -144,6 +154,12 @@ export default function ControllerProfileEditor({ open }: ControllerProfileEdito
                       className="px-3 py-1 text-xs bg-gray-700 rounded hover:bg-gray-600"
                     >
                       Cancel
+                    </button>
+                    <button
+                      onClick={() => deleteProfile(profile.unique_id)}
+                      className="px-3 py-1 text-xs bg-red-600 rounded hover:bg-red-500 ml-auto"
+                    >
+                      Delete
                     </button>
                   </div>
                 </div>

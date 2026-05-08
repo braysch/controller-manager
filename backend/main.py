@@ -252,6 +252,37 @@ async def update_profile(unique_id: str, update: ControllerProfileUpdate):
     return {"error": "Profile not found"}
 
 
+@app.delete("/api/profiles/{unique_id}")
+async def delete_profile(unique_id: str):
+    # If the controller is currently connected, "deleting" it really means
+    # resetting it to defaults, since StateManager/database ensure connected
+    # devices always have a profile.
+    device_path = state_manager.get_path_for_unique_id(unique_id)
+    if device_path:
+        # Reset to defaults and recreate DB entry
+        await database.delete_profile(unique_id)
+        profile = await state_manager.reset_profile(unique_id)
+        
+        # Find the updated controller in either list to broadcast
+        controller = None
+        if device_path in state_manager._connected:
+            controller = state_manager._connected[device_path]
+        elif device_path in state_manager._ready:
+            controller = state_manager._ready[device_path]
+            
+        if controller:
+            # Broadcast update so UI knows it's reset
+            event_type = "controller_ready" if device_path in state_manager._ready else "controller_connected"
+            await ws_manager.broadcast(event_type, controller.model_dump())
+            return profile
+    
+    # Not connected, just delete it
+    success = await database.delete_profile(unique_id)
+    if success:
+        return {"status": "deleted"}
+    return {"error": "Profile not found"}
+
+
 class StartButtonUpdate(BaseModel):
     tr2_is_start: bool
 

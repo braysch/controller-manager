@@ -27,6 +27,10 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(data)
     }),
+  deleteProfile: (unique_id: string) =>
+    request(`/profiles/${encodeURIComponent(unique_id)}`, {
+      method: 'DELETE'
+    }),
 
   startBluetoothScan: () => request('/bluetooth/scan', { method: 'POST' }),
   stopBluetoothScan: () => request('/bluetooth/stop-scan', { method: 'POST' }),

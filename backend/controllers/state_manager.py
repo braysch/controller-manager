@@ -267,3 +267,28 @@ class StateManager:
             r.custom_name = profile.custom_name
             r.img_src = profile.img_src
             r.snd_src = profile.snd_src
+
+    async def reset_profile(self, unique_id: str):
+        """Revert in-memory state to defaults after a profile is deleted."""
+        device_path = self._uid_to_path.get(unique_id)
+        if not device_path:
+            return
+
+        # Re-upsert will create a new default profile in DB and return it
+        # We need to find the original device info to call add_connected or similar,
+        # but we don't have it easily. However, we can just call upsert_profile
+        # with what we have in memory.
+        
+        c = self._connected.get(device_path) or self._ready.get(device_path)
+        if not c:
+            return
+
+        profile = await database.upsert_profile(
+            unique_id=unique_id,
+            default_name=c.name, # This is the original default_name
+            vendor_id=c.vendor_id,
+            product_id=c.product_id,
+        )
+        
+        self.refresh_profile(unique_id, profile)
+        return profile
