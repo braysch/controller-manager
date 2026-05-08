@@ -76,6 +76,9 @@ SEED_EMULATORS = [
     ("yuzu", "~/.var/app/org.yuzu_emu.yuzu/config/yuzu/qt-config.ini"),
     ("dolphin_gc", "~/.var/app/org.DolphinEmu.dolphin-emu/config/dolphin-emu/GCPadNew.ini"),
     ("dolphin_wii", "~/.var/app/org.DolphinEmu.dolphin-emu/config/dolphin-emu/WiimoteNew.ini"),
+    ("desmume", "~/.var/app/org.desmume.DeSmuME/config/desmume/config.cfg"),
+    ("mesen", "~/.local/share/mesen/settings.json"),
+    ("parallel", "~/.config/parallel-launcher/settings.cfg"),
 ]
 
 

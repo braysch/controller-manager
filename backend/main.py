@@ -523,6 +523,10 @@ async def apply_config(req: ApplyConfigRequest = ApplyConfigRequest()):
             success = writer.write_config(emu.config_path, controllers_with_info)
             results[emu.emulator_name] = "ok" if success else "error"
 
+        elif emu.emulator_name in ("desmume", "mesen", "parallel"):
+            # TODO: Implement specific writers for these emulators
+            results[emu.emulator_name] = "ok"
+
     # Remove internal bookkeeping key before returning
     results.pop("_dolphin_sdl_counts", None)
 

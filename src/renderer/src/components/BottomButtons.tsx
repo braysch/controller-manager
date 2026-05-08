@@ -4,6 +4,9 @@ const EMULATOR_OPTIONS = [
   { value: 'yuzu', label: 'Yuzu' },
   { value: 'dolphin_gc', label: 'Dolphin (GC)' },
   { value: 'dolphin_wii', label: 'Dolphin (Wii)' },
+  { value: 'desmume', label: 'DeSmuME' },
+  { value: 'mesen', label: 'Mesen' },
+  { value: 'parallel', label: 'Parallel' },
 ]
 
 interface BottomButtonsProps {
