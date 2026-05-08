@@ -56,7 +56,8 @@ class BlueZManager:
 
     def _is_controller(self, properties: dict) -> bool:
         """Check if a discovered device looks like a game controller."""
-        name = str(properties.get("Name", properties.get("Alias", ""))).lower()
+        name_var = properties.get("Name") or properties.get("Alias") or ""
+        name = (name_var.unpack() if hasattr(name_var, "unpack") else str(name_var)).lower()
         appearance_var = properties.get("Appearance")
         appearance = appearance_var.unpack() if appearance_var is not None else 0
 
@@ -144,13 +145,15 @@ class BlueZManager:
                             continue
 
                         props = interfaces["org.bluez.Device1"]
-                        address = str(props.get("Address", ""))
+                        addr_var = props.get("Address", "")
+                        address = addr_var.unpack() if hasattr(addr_var, "unpack") else str(addr_var)
                         if not address or address in seen_addresses:
                             continue
 
                         if self._is_controller(props):
                             seen_addresses.add(address)
-                            name = str(props.get("Name", props.get("Alias", "Unknown")))
+                            name_var = props.get("Name") or props.get("Alias") or "Unknown"
+                            name = name_var.unpack() if hasattr(name_var, "unpack") else str(name_var)
                             if self._on_device_found:
                                 await self._on_device_found(name, address)
 
@@ -201,7 +204,9 @@ class BlueZManager:
                 if "org.bluez.Device1" not in interfaces:
                     continue
                 props = interfaces["org.bluez.Device1"]
-                if str(props.get("Address", "")).upper() == address.upper():
+                addr_var = props.get("Address", "")
+                dev_addr = addr_var.unpack() if hasattr(addr_var, "unpack") else str(addr_var)
+                if dev_addr.upper() == address.upper():
                     return str(path)
         except Exception as e:
             print(f"[BlueZ] Error searching for device {address}: {e}")
@@ -276,7 +281,9 @@ class BlueZManager:
                     if "org.bluez.Device1" not in interfaces:
                         continue
                     props = interfaces["org.bluez.Device1"]
-                    if str(props.get("Address", "")).upper() == address.upper():
+                    addr_var2 = props.get("Address", "")
+                    dev_addr2 = addr_var2.unpack() if hasattr(addr_var2, "unpack") else str(addr_var2)
+                    if dev_addr2.upper() == address.upper():
                         print(f"[BlueZ] {address} reappeared, pairing...")
                         try:
                             adapter.StopDiscovery()

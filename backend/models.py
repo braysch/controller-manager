@@ -11,6 +11,7 @@ class ControllerProfile(BaseModel):
     vendor_id: Optional[int] = None
     product_id: Optional[int] = None
     guid_override: Optional[str] = None
+    bluetooth_address: Optional[str] = None
     start_button: Optional[int] = None  # Inherited from controller type default
 
 

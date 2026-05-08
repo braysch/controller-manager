@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Bluetooth } from 'lucide-react'
 import { api } from '../lib/api'
-import type { BluetoothDevice, Controller } from '../types'
+import type { BluetoothDevice, Controller, ControllerProfile } from '../types'
 import Button from './Button'
 
 interface RescanButtonProps {
@@ -26,6 +26,7 @@ export default function RescanButton({
   const [disconnectingAll, setDisconnectingAll] = useState(false)
   const [removingAll, setRemovingAll] = useState(false)
   const [contextMenu, setContextMenu] = useState<{ address: string; x: number; y: number } | null>(null)
+  const [profiles, setProfiles] = useState<ControllerProfile[]>([])
 
   const isScanning = scanning || bluetoothScanning
 
@@ -52,6 +53,12 @@ export default function RescanButton({
       setRemovedAddresses(new Set())
       setScanning(true)
       setShowDropdown(true)
+      try {
+        const p = await api.getProfiles()
+        setProfiles(p as ControllerProfile[])
+      } catch (e) {
+        console.error('Failed to load profiles for scan list:', e)
+      }
       try {
         await api.startBluetoothScan()
       } catch {
@@ -145,7 +152,7 @@ export default function RescanButton({
         </Button>
 
         {showDropdown && (isScanning || visibleDevices.length > 0) && (
-          <div className="absolute right-0 top-full mt-1 w-64 bg-gray-800 border border-gray-600 rounded-lg shadow-lg z-30 overflow-hidden">
+          <div className="absolute right-0 top-full mt-1 w-72 bg-gray-800 border border-gray-600 rounded-lg shadow-lg z-30 overflow-hidden">
             <div className="p-2 border-b border-gray-700 flex items-center justify-between">
               <span className="text-xs text-gray-400">
                 {isScanning ? 'Scanning...' : 'Found Devices'}
@@ -165,15 +172,31 @@ export default function RescanButton({
               sortedDevices.map((d) => {
                 const isConnected = connectedAddresses.has(d.address.toLowerCase())
                 const isConnecting = connecting === d.address
+                const addrLower = d.address.toLowerCase()
+                const imgSrc = profiles.find((p) =>
+                  p.unique_id.toLowerCase() === addrLower ||
+                  (!!p.bluetooth_address && p.bluetooth_address.toLowerCase() === addrLower)
+                )?.img_src
                 return (
                   <div
                     key={d.address}
                     className="flex items-center justify-between px-3 py-2 hover:bg-gray-700"
                     onContextMenu={(e) => handleContextMenu(e, d.address)}
                   >
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm truncate">{d.name}</p>
-                      <p className="text-[10px] text-gray-500">{d.address}</p>
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                      {imgSrc ? (
+                        <img
+                          src={`http://127.0.0.1:8000/assets/images/${imgSrc}`}
+                          alt=""
+                          className="w-8 h-8 object-contain flex-shrink-0"
+                        />
+                      ) : (
+                        <div className="w-8 h-8 flex-shrink-0" />
+                      )}
+                      <div className="min-w-0">
+                        <p className="text-sm truncate">{d.name}</p>
+                        <p className="text-[10px] text-gray-500">{d.address}</p>
+                      </div>
                     </div>
                     <button
                       onClick={() => !isConnected && handleConnect(d.address)}

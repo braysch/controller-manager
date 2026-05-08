@@ -17,6 +17,11 @@ export default function ControllerProfileEditor({ open }: ControllerProfileEdito
   const [editGuid, setEditGuid] = useState('')
   const [editTr2IsStart, setEditTr2IsStart] = useState(false)
 
+  const MAC_RE = /^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$/i
+  const resolveMac = (profile: ControllerProfile) =>
+    profile.bluetooth_address ||
+    (MAC_RE.test(profile.unique_id) ? profile.unique_id : null)
+
   useEffect(() => {
     if (!open) return
     api.getProfiles().then((p) => setProfiles(p as ControllerProfile[])).catch(console.error)
@@ -109,6 +114,15 @@ export default function ControllerProfileEditor({ open }: ControllerProfileEdito
                       className="w-full bg-gray-700 rounded px-2 py-1 text-xs font-mono"
                     />
                   </div>
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">MAC Address</label>
+                    <input
+                      readOnly
+                      value={resolveMac(profile) ?? ''}
+                      placeholder="Reconnect controller to capture"
+                      className="w-full bg-gray-800 rounded px-2 py-1 text-xs font-mono text-gray-400 cursor-default placeholder-gray-600"
+                    />
+                  </div>
                   <label className="flex items-center gap-2 cursor-pointer select-none">
                     <input
                       type="checkbox"
@@ -148,6 +162,9 @@ export default function ControllerProfileEditor({ open }: ControllerProfileEdito
                       {profile.custom_name || profile.default_name}
                     </div>
                     <div className="text-xs text-gray-500">{profile.unique_id}</div>
+                    {resolveMac(profile) !== profile.unique_id && resolveMac(profile) && (
+                      <div className="text-xs text-gray-500 font-mono">MAC: {resolveMac(profile)}</div>
+                    )}
                     {profile.guid_override && (
                       <div className="text-xs text-yellow-500 font-mono">GUID: {profile.guid_override}</div>
                     )}

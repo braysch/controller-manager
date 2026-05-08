@@ -33,6 +33,7 @@ class StateManager:
             default_name=device_info["name"],
             vendor_id=device_info.get("vendor_id"),
             product_id=device_info.get("product_id"),
+            bluetooth_address=device_info.get("bluetooth_address"),
         )
 
         # Use guid_override from DB profile if set, otherwise use evdev-computed GUID

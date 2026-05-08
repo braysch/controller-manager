@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS controllers (
     vendor_id INTEGER,
     product_id INTEGER,
     guid_override TEXT,
+    bluetooth_address TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -152,6 +153,11 @@ async def _migrate(db: aiosqlite.Connection) -> None:
             except Exception:
                 pass
 
+        try:
+            await db.execute("ALTER TABLE controllers ADD COLUMN bluetooth_address TEXT")
+        except Exception:
+            pass  # column already exists
+
         if needs_type_start_button:
             try:
                 await db.execute("ALTER TABLE controller_type_defaults ADD COLUMN start_button INTEGER")
@@ -226,7 +232,7 @@ async def get_profiles_by_product(vendor_id: int, product_id: int) -> list[Contr
     db = await get_db()
     try:
         cursor = await db.execute(
-            "SELECT unique_id, default_name, custom_name, img_src, snd_src, vendor_id, product_id, guid_override "
+            "SELECT unique_id, default_name, custom_name, img_src, snd_src, vendor_id, product_id, guid_override, bluetooth_address "
             "FROM controllers WHERE vendor_id = ? AND product_id = ? ORDER BY updated_at DESC",
             (vendor_id, product_id),
         )
@@ -241,6 +247,7 @@ async def get_profiles_by_product(vendor_id: int, product_id: int) -> list[Contr
                 vendor_id=r[5],
                 product_id=r[6],
                 guid_override=r[7],
+                bluetooth_address=r[8],
             )
             for r in rows
         ]
@@ -252,7 +259,7 @@ async def get_profile(unique_id: str) -> Optional[ControllerProfile]:
     db = await get_db()
     try:
         cursor = await db.execute(
-            "SELECT unique_id, default_name, custom_name, img_src, snd_src, vendor_id, product_id, guid_override FROM controllers WHERE unique_id = ?",
+            "SELECT unique_id, default_name, custom_name, img_src, snd_src, vendor_id, product_id, guid_override, bluetooth_address FROM controllers WHERE unique_id = ?",
             (unique_id,),
         )
         row = await cursor.fetchone()
@@ -267,6 +274,7 @@ async def get_profile(unique_id: str) -> Optional[ControllerProfile]:
             vendor_id=row[5],
             product_id=row[6],
             guid_override=row[7],
+            bluetooth_address=row[8],
         )
     finally:
         await db.close()
@@ -279,6 +287,7 @@ async def upsert_profile(
     product_id: Optional[int] = None,
     img_src: Optional[str] = None,
     snd_src: Optional[str] = None,
+    bluetooth_address: Optional[str] = None,
 ) -> ControllerProfile:
     """Insert or update a controller profile. Returns the profile."""
     db = await get_db()
@@ -299,6 +308,11 @@ async def upsert_profile(
                     "UPDATE controllers SET product_id = ?, updated_at = CURRENT_TIMESTAMP WHERE unique_id = ?",
                     (product_id, unique_id),
                 )
+            if bluetooth_address is not None:
+                await db.execute(
+                    "UPDATE controllers SET bluetooth_address = ?, updated_at = CURRENT_TIMESTAMP WHERE unique_id = ?",
+                    (bluetooth_address, unique_id),
+                )
         else:
             # Determine default assets and guid_override from type_defaults
             resolved_img = img_src or "default.png"
@@ -313,8 +327,8 @@ async def upsert_profile(
                     resolved_guid = type_default.guid_override
 
             await db.execute(
-                "INSERT INTO controllers (unique_id, default_name, img_src, snd_src, vendor_id, product_id, guid_override) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (unique_id, default_name, resolved_img, resolved_snd, vendor_id, product_id, resolved_guid),
+                "INSERT INTO controllers (unique_id, default_name, img_src, snd_src, vendor_id, product_id, guid_override, bluetooth_address) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (unique_id, default_name, resolved_img, resolved_snd, vendor_id, product_id, resolved_guid, bluetooth_address),
             )
 
         await db.commit()
@@ -366,7 +380,7 @@ async def get_all_profiles() -> list[ControllerProfile]:
     db = await get_db()
     try:
         cursor = await db.execute(
-            "SELECT unique_id, default_name, custom_name, img_src, snd_src, vendor_id, product_id, guid_override FROM controllers ORDER BY id"
+            "SELECT unique_id, default_name, custom_name, img_src, snd_src, vendor_id, product_id, guid_override, bluetooth_address FROM controllers ORDER BY id"
         )
         rows = await cursor.fetchall()
         profiles = [
@@ -379,6 +393,7 @@ async def get_all_profiles() -> list[ControllerProfile]:
                 vendor_id=r[5],
                 product_id=r[6],
                 guid_override=r[7],
+                bluetooth_address=r[8],
             )
             for r in rows
         ]

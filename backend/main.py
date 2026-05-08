@@ -1,8 +1,9 @@
 import asyncio
 import json
 import os
+import re
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -52,6 +53,9 @@ class ConnectionManager:
             self.disconnect(ws)
 
 
+_MAC_RE = re.compile(r'^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$')
+_pending_bt_address: Optional[str] = None
+
 ws_manager = ConnectionManager()
 state_manager = StateManager()
 evdev_monitor = EvdevMonitor()
@@ -66,6 +70,14 @@ dolphin_wii_writer = DolphinWiiWriter()
 
 async def on_controller_connected(device_info: dict):
     """Called by evdev_monitor when a new device is detected."""
+    global _pending_bt_address
+    if device_info.get("connection_type") == "bluetooth":
+        uid = device_info.get("unique_id", "")
+        if _MAC_RE.match(uid):
+            device_info = {**device_info, "bluetooth_address": uid}
+        elif _pending_bt_address:
+            device_info = {**device_info, "bluetooth_address": _pending_bt_address}
+            _pending_bt_address = None
     controller = await state_manager.add_connected(device_info)
     if controller:
         # Register with battery monitor
@@ -288,9 +300,12 @@ class PairRequest(BaseModel):
 
 @app.post("/api/bluetooth/pair")
 async def pair_bluetooth_device(req: PairRequest):
+    global _pending_bt_address
+    _pending_bt_address = req.address
     success = await bluez_manager.pair_device(req.address)
     if success:
         return {"status": "paired", "address": req.address}
+    _pending_bt_address = None
     return {"error": "Pairing failed", "address": req.address}
 
 

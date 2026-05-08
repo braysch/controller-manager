@@ -29,6 +29,7 @@ export interface ControllerProfile {
   vendor_id?: number
   product_id?: number
   guid_override?: string
+  bluetooth_address?: string
   start_button?: number
 }
 
