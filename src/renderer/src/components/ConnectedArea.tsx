@@ -1,8 +1,9 @@
-import type { Controller, BluetoothDevice } from '../types'
+import type { Controller, ReadyController, BluetoothDevice } from '../types'
 import RescanButton from './RescanButton'
 
 interface ConnectedAreaProps {
   controllers: Controller[]
+  readyControllers: ReadyController[]
   bluetoothDevices: BluetoothDevice[]
   bluetoothScanning: boolean
   onClearBluetoothDevices: () => void
@@ -11,6 +12,7 @@ interface ConnectedAreaProps {
 
 export default function ConnectedArea({
   controllers,
+  readyControllers,
   bluetoothDevices,
   bluetoothScanning,
   onClearBluetoothDevices,
@@ -40,7 +42,7 @@ export default function ConnectedArea({
           bluetoothDevices={bluetoothDevices}
           bluetoothScanning={bluetoothScanning}
           onClearDevices={onClearBluetoothDevices}
-          connectedControllers={controllers}
+          connectedControllers={[...controllers, ...readyControllers]}
         />
       </div>
     </div>

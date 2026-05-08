@@ -41,6 +41,7 @@ function App(): JSX.Element {
       <div className="flex-1 flex flex-col overflow-hidden px-4 pb-4 gap-4">
         <ConnectedArea
           controllers={connected}
+          readyControllers={ready}
           bluetoothDevices={bluetoothDevices}
           bluetoothScanning={bluetoothScanning}
           onClearBluetoothDevices={clearBluetoothDevices}
