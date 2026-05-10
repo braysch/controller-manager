@@ -13,6 +13,7 @@ function App(): JSX.Element {
   const [emulatorFolder, setEmulatorFolder] = useState<string | null>(null)
   const [emulatorTarget, setEmulatorTarget] = useState<string | null>(null)
   const [manualEmulator, setManualEmulator] = useState<string>('yuzu')
+  const [manualGame, setManualGame] = useState<string | null>(null)
 
   useEffect(() => {
     window.api.getLaunchPaths().then(({ gameFolder, emulatorFolder, emulatorTarget }) => {
@@ -21,6 +22,14 @@ function App(): JSX.Element {
       setEmulatorTarget(emulatorTarget)
     })
   }, [])
+
+  const selectManualGame = async () => {
+    const result = await window.api.selectGame()
+    if (result) {
+      setManualGame(result.gamePath)
+      setGameFolder(result.gameFolder)
+    }
+  }
 
   const activeEmulatorTarget = emulatorTarget ?? manualEmulator
   const { connected, ready, dispatch } = useControllers()
@@ -31,7 +40,7 @@ function App(): JSX.Element {
     clearBluetoothDevices,
     poppingControllers
   } = useWebSocket(dispatch, () => {
-    if (ready.length > 0) dispatch({ type: 'APPLY_CONFIG', emulatorTarget: activeEmulatorTarget })
+    if (ready.length > 0) dispatch({ type: 'APPLY_CONFIG', emulatorTarget: activeEmulatorTarget, gamePath: manualGame })
   })
 
   return (
@@ -56,13 +65,15 @@ function App(): JSX.Element {
 
       <BottomButtons
         onReassign={() => dispatch({ type: 'REASSIGN' })}
-        onOkay={() => dispatch({ type: 'APPLY_CONFIG', emulatorTarget: activeEmulatorTarget })}
+        onOkay={() => dispatch({ type: 'APPLY_CONFIG', emulatorTarget: activeEmulatorTarget, gamePath: manualGame })}
         onBack={() => window.close()}
         hasReady={ready.length > 0}
         gameFolder={gameFolder}
         emulatorFolder={emulatorFolder}
         manualEmulator={emulatorTarget === null ? manualEmulator : null}
         onManualEmulatorChange={setManualEmulator}
+        manualGame={manualGame}
+        onManualGameSelect={selectManualGame}
       />
 
       <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />

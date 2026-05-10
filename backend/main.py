@@ -12,52 +12,28 @@ from pydantic import BaseModel
 
 import config
 import database
+from battery.battery_monitor import BatteryMonitor
+from bluetooth.bluez_manager import BlueZManager
+from controllers.evdev_monitor import EvdevMonitor
+from controllers.state_manager import StateManager
+from emulators.dolphin import DolphinGCWriter, DolphinWiiWriter
+from emulators.mesen import MesenConfigWriter
+from emulators.yuzu import YuzuConfigWriter
 from models import (
+    ApplyConfigRequest,
     ControllerProfileUpdate,
     EmulatorConfigUpdate,
     MoveToReadyRequest,
-    ApplyConfigRequest,
+    ReadyController,
 )
-from controllers.state_manager import StateManager
-from controllers.evdev_monitor import EvdevMonitor
 from controllers.device_matcher import SDLInfo
-from bluetooth.bluez_manager import BlueZManager
-from battery.battery_monitor import BatteryMonitor
-from emulators.yuzu import YuzuConfigWriter
-from emulators.dolphin import DolphinGCWriter, DolphinWiiWriter
-from emulators.mesen import MesenConfigWriter
 
-
-# --- WebSocket connection manager ---
-
-class ConnectionManager:
-    def __init__(self):
-        self.connections: list[WebSocket] = []
-
-    async def connect(self, ws: WebSocket):
-        await ws.accept()
-        self.connections.append(ws)
-
-    def disconnect(self, ws: WebSocket):
-        if ws in self.connections:
-            self.connections.remove(ws)
-
-    async def broadcast(self, event_type: str, data: Any):
-        message = json.dumps({"type": event_type, "data": data})
-        dead = []
-        for ws in self.connections:
-            try:
-                await ws.send_text(message)
-            except Exception:
-                dead.append(ws)
-        for ws in dead:
-            self.disconnect(ws)
-
+# --- Global state ---
 
 _MAC_RE = re.compile(r'^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$')
 _pending_bt_address: Optional[str] = None
 
-ws_manager = ConnectionManager()
+ws_manager = None
 state_manager = StateManager()
 evdev_monitor = EvdevMonitor()
 bluez_manager = BlueZManager()
@@ -67,6 +43,127 @@ dolphin_gc_writer = DolphinGCWriter()
 dolphin_wii_writer = DolphinWiiWriter()
 mesen_writer = MesenConfigWriter()
 
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+
+    async def broadcast(self, event_type: str, data: Any):
+        message = json.dumps({"type": event_type, "data": data})
+        dead = []
+        for ws in self.active_connections:
+            try:
+                await ws.send_text(message)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            self.disconnect(ws)
+
+ws_manager = ConnectionManager()
+
+# --- Helpers ---
+
+def _resolve_mesen_ports(ready_list: list[ReadyController]) -> list[ReadyController]:
+    """Predict Mesen Pad IDs by sorting all active joysticks LIFO and accounting for ghost pads."""
+    import subprocess
+    js_devices_info = []
+    input_dir = "/dev/input"
+    if os.path.exists(input_dir):
+        for entry in os.listdir(input_dir):
+            if entry.startswith("event"):
+                node_path = os.path.join(input_dir, entry)
+                try:
+                    out = subprocess.check_output(["udevadm", "info", "--query=property", "--name=" + node_path], text=True)
+                    if "ID_INPUT_JOYSTICK=1" in out or "ID_INPUT_GAMEPAD=1" in out:
+                        event_num = int(entry.replace("event", ""))
+                        name = ""
+                        for line in out.splitlines():
+                            if line.startswith("ID_MODEL="):
+                                name = line.split("=")[1].lower()
+                                break
+                        js_devices_info.append({"num": event_num, "path": node_path, "name": name})
+                except Exception:
+                    pass
+    
+    # Sort LIFO: Newest (Highest event number) is Pad 1
+    js_devices_info.sort(key=lambda x: x["num"], reverse=True)
+    
+    # Map each device to its Mesen Pad Index
+    js_index_map = {}
+    current_pad = 0
+    for dev_info in js_devices_info:
+        # Find if this physical path matches a connected/ready controller to get its pad_length
+        uid = state_manager.get_unique_id_for_path(dev_info["path"])
+        pad_len = 1
+        if uid:
+            c = state_manager._connected.get(dev_info["path"]) or state_manager._ready.get(dev_info["path"])
+            if c:
+                pad_len = c.pad_length
+        
+        if pad_len > 1:
+            # Actual gamepad is the LAST pad in the block (offset by pad_len - 1)
+            js_index_map[dev_info["path"]] = current_pad + (pad_len - 1)
+            current_pad += pad_len
+        else:
+            js_index_map[dev_info["path"]] = current_pad
+            current_pad += 1
+
+    # Attach the predicted Pad index (0-based) to each controller
+    for r in ready_list:
+        device_path = state_manager.get_path_for_unique_id(r.unique_id)
+        r.port = js_index_map.get(device_path, 0) if device_path else 0
+        
+    return ready_list
+
+# Hardcoded SDL2 device names for Dolphin.
+_DOLPHIN_NAME_BY_VID_PID: dict[tuple[int, int], str] = {
+    (0x057E, 0x2009): "Nintendo Switch Pro Controller",
+    (0x045E, 0x0B13): "Xbox Series X Controller",
+}
+_DOLPHIN_NAME_BY_GUID: dict[str, str] = {
+    "030000007e0500000920000000006806": "Nintendo Switch Pro Controller",
+}
+
+def _dolphin_sdl_name(r) -> str:
+    """Return the SDL2 device name Dolphin will use for this controller."""
+    if r.vendor_id and r.product_id:
+        name = _DOLPHIN_NAME_BY_VID_PID.get((r.vendor_id, r.product_id))
+        if name:
+            return name
+    if r.guid:
+        name = _DOLPHIN_NAME_BY_GUID.get(r.guid)
+        if name:
+            return name
+    return r.name
+
+def _is_wiimote(controller) -> bool:
+    if controller.vendor_id == 0x057E and controller.product_id == 0x0306:
+        return True
+    name_lower = controller.name.lower()
+    return "wiimote" in name_lower or "wii remote" in name_lower
+
+def _build_dolphin_controllers(filtered: list, sdl_name_counts: dict[str, int]) -> list[tuple]:
+    result = []
+    for r in filtered:
+        sdl_name = _dolphin_sdl_name(r)
+        port = sdl_name_counts.get(sdl_name, 0)
+        sdl_name_counts[sdl_name] = port + 1
+        sdl_info = SDLInfo(
+            guid=r.guid or "",
+            port=port,
+            vendor_id=r.vendor_id or 0,
+            product_id=r.product_id or 0,
+            device_name=sdl_name,
+        )
+        result.append((r.unique_id, sdl_info))
+    return result
 
 # --- Callbacks ---
 
@@ -85,7 +182,12 @@ async def on_controller_connected(device_info: dict):
         # Register with battery monitor
         battery_monitor.register_device(device_info["device_path"])
         await ws_manager.broadcast("controller_connected", controller.model_dump())
-
+        
+        # Re-resolve Pad IDs for all ready controllers and broadcast updates
+        ready = state_manager.get_ready_list()
+        updated_ready = _resolve_mesen_ports(ready)
+        for r in updated_ready:
+            await ws_manager.broadcast("controller_ready", r.model_dump())
 
 async def on_controller_disconnected(device_path: str):
     """Called by evdev_monitor when a device is removed."""
@@ -98,14 +200,23 @@ async def on_controller_disconnected(device_path: str):
         await ws_manager.broadcast("controller_disconnected", {"unique_id": unique_id})
         if was_ready:
             await ws_manager.broadcast("controller_unready", {"unique_id": unique_id})
-
+            
+        # Re-resolve Pad IDs for all ready controllers and broadcast updates
+        ready = state_manager.get_ready_list()
+        updated_ready = _resolve_mesen_ports(ready)
+        for r in updated_ready:
+            await ws_manager.broadcast("controller_ready", r.model_dump())
 
 async def on_button_press(device_path: str, button_code: int):
     """Called by evdev_monitor on START/TR2 press."""
     controller = await state_manager.move_to_ready(device_path)
     if controller:
-        await ws_manager.broadcast("controller_ready", controller.model_dump())
-
+        # Resolve ports before broadcasting
+        ready = state_manager.get_ready_list()
+        updated_ready = _resolve_mesen_ports(ready)
+        # Find this specific controller in the updated list
+        this_controller = next((c for c in updated_ready if c.unique_id == controller.unique_id), controller)
+        await ws_manager.broadcast("controller_ready", this_controller.model_dump())
 
 async def on_input(device_path: str):
     """Called by evdev_monitor on any significant input."""
@@ -113,11 +224,9 @@ async def on_input(device_path: str):
     if unique_id:
         await ws_manager.broadcast("controller_input", {"unique_id": unique_id})
 
-
 async def on_start_pressed(device_path: str):
     """Called by evdev_monitor when the Start button is pressed."""
     await ws_manager.broadcast("start_pressed", {})
-
 
 async def on_battery_update(device_path: str, percent: int):
     """Called by battery_monitor on change."""
@@ -125,7 +234,6 @@ async def on_battery_update(device_path: str, percent: int):
     if unique_id:
         state_manager.update_battery(unique_id, percent)
         await ws_manager.broadcast("battery_update", {"unique_id": unique_id, "battery_percent": percent})
-
 
 # --- App lifespan ---
 
@@ -141,25 +249,13 @@ async def lifespan(app: FastAPI):
     evdev_monitor.on_start_pressed = on_start_pressed
     battery_monitor.on_update = on_battery_update
 
-    monitor_task = asyncio.create_task(evdev_monitor.run())
-    battery_task = asyncio.create_task(battery_monitor.run())
+    asyncio.create_task(evdev_monitor.run())
+    asyncio.create_task(battery_monitor.run())
 
     yield
 
     # Shutdown
     evdev_monitor.stop()
-    battery_monitor.stop()
-    monitor_task.cancel()
-    battery_task.cancel()
-    try:
-        await monitor_task
-    except asyncio.CancelledError:
-        pass
-    try:
-        await battery_task
-    except asyncio.CancelledError:
-        pass
-
 
 app = FastAPI(title="Controller Manager", lifespan=lifespan)
 
@@ -171,13 +267,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 # --- Health ---
 
 @app.get("/health")
 async def health():
     return {"status": "ok"}
-
 
 # --- WebSocket ---
 
@@ -187,6 +281,9 @@ async def websocket_endpoint(ws: WebSocket):
     try:
         # Send initial state snapshot
         snapshot = state_manager.get_snapshot()
+        # Resolve ports in snapshot
+        snapshot["ready"] = _resolve_mesen_ports([ReadyController(**c) for c in snapshot["ready"]])
+        snapshot["ready"] = [c.model_dump() for c in snapshot["ready"]]
         await ws.send_text(json.dumps({"type": "state_snapshot", "data": snapshot}))
 
         while True:
@@ -197,18 +294,17 @@ async def websocket_endpoint(ws: WebSocket):
     except Exception:
         ws_manager.disconnect(ws)
 
-
 # --- Controller endpoints ---
 
 @app.get("/api/controllers/connected")
 async def get_connected():
     return state_manager.get_connected_list()
 
-
 @app.get("/api/controllers/ready")
 async def get_ready():
-    return state_manager.get_ready_list()
-
+    # Get current ready list and resolve their physical Pad IDs
+    ready = state_manager.get_ready_list()
+    return _resolve_mesen_ports(ready)
 
 @app.post("/api/controllers/ready")
 async def move_to_ready(req: MoveToReadyRequest):
@@ -217,10 +313,13 @@ async def move_to_ready(req: MoveToReadyRequest):
         return {"error": "Controller not found"}
     controller = await state_manager.move_to_ready(device_path)
     if controller:
-        await ws_manager.broadcast("controller_ready", controller.model_dump())
-        return controller
+        # Resolve ports before returning
+        ready = state_manager.get_ready_list()
+        updated_ready = _resolve_mesen_ports(ready)
+        this_controller = next((c for c in updated_ready if c.unique_id == controller.unique_id), controller)
+        await ws_manager.broadcast("controller_ready", this_controller.model_dump())
+        return this_controller
     return {"error": "Controller already ready or not connected"}
-
 
 @app.delete("/api/controllers/ready")
 async def clear_ready():
@@ -230,13 +329,11 @@ async def clear_ready():
         await ws_manager.broadcast("controller_connected", c.model_dump())
     return {"cleared": len(controllers)}
 
-
 # --- Profile endpoints ---
 
 @app.get("/api/profiles")
 async def get_profiles():
     return await database.get_all_profiles()
-
 
 @app.put("/api/profiles/{unique_id}")
 async def update_profile(unique_id: str, update: ControllerProfileUpdate):
@@ -246,13 +343,27 @@ async def update_profile(unique_id: str, update: ControllerProfileUpdate):
         img_src=update.img_src,
         snd_src=update.snd_src,
         guid_override=update.guid_override if update.guid_override is not None else ...,
+        pad_length=update.pad_length,
+        tr2_is_start=update.tr2_is_start,
     )
     if profile:
         # Update in-memory state
         state_manager.refresh_profile(unique_id, profile)
+        
+        # Update start button in evdev_monitor
+        device_path = state_manager.get_path_for_unique_id(unique_id)
+        if device_path:
+            evdev_monitor.update_start_button_for_path(device_path, profile.tr2_is_start)
+        
+        # New: Re-resolve Pad IDs for all ready controllers if pad_length changed
+        # and broadcast updates so GUI labels refresh immediately
+        ready = state_manager.get_ready_list()
+        updated_ready = _resolve_mesen_ports(ready)
+        for r in updated_ready:
+            await ws_manager.broadcast("controller_ready", r.model_dump())
+            
         return profile
     return {"error": "Profile not found"}
-
 
 @app.delete("/api/profiles/{unique_id}")
 async def delete_profile(unique_id: str):
@@ -266,11 +377,7 @@ async def delete_profile(unique_id: str):
         profile = await state_manager.reset_profile(unique_id)
         
         # Find the updated controller in either list to broadcast
-        controller = None
-        if device_path in state_manager._connected:
-            controller = state_manager._connected[device_path]
-        elif device_path in state_manager._ready:
-            controller = state_manager._ready[device_path]
+        controller = state_manager._connected.get(device_path) or state_manager._ready.get(device_path)
             
         if controller:
             # Broadcast update so UI knows it's reset
@@ -284,27 +391,16 @@ async def delete_profile(unique_id: str):
         return {"status": "deleted"}
     return {"error": "Profile not found"}
 
-
 class StartButtonUpdate(BaseModel):
     tr2_is_start: bool
 
-
 @app.put("/api/profiles/{unique_id}/start-button")
 async def update_profile_start_button(unique_id: str, update: StartButtonUpdate):
-    profile = await database.get_profile(unique_id)
-    if not profile:
-        return {"error": "Profile not found"}
-    start_button = database._BTN_TR2 if update.tr2_is_start else None
-    success = await database.update_type_default_start_button(
-        profile.vendor_id, profile.product_id, profile.default_name, start_button
-    )
-    if success:
-        evdev_monitor.update_start_button_for_type(
-            profile.vendor_id, profile.product_id, profile.default_name, start_button
-        )
-        return {"status": "updated", "tr2_is_start": update.tr2_is_start}
-    return {"error": "Update failed"}
-
+    profile = await database.update_profile_fields(unique_id, tr2_is_start=update.tr2_is_start)
+    if profile:
+        state_manager.refresh_profile(unique_id, profile)
+        return {"status": "updated", "tr2_is_start": profile.tr2_is_start}
+    return {"error": "Profile not found"}
 
 # --- Bluetooth endpoints ---
 
@@ -320,16 +416,13 @@ async def start_bluetooth_scan():
     await ws_manager.broadcast("bluetooth_scan_started", {})
     return {"status": "scanning"}
 
-
 @app.post("/api/bluetooth/stop-scan")
 async def stop_bluetooth_scan():
     await bluez_manager.stop_scan()
     return {"status": "stopped"}
 
-
 class PairRequest(BaseModel):
     address: str
-
 
 @app.post("/api/bluetooth/pair")
 async def pair_bluetooth_device(req: PairRequest):
@@ -341,14 +434,12 @@ async def pair_bluetooth_device(req: PairRequest):
     _pending_bt_address = None
     return {"error": "Pairing failed", "address": req.address}
 
-
 @app.post("/api/bluetooth/disconnect")
 async def disconnect_bluetooth_device(req: PairRequest):
     success = await bluez_manager.disconnect_device(req.address)
     if success:
         return {"status": "disconnected", "address": req.address}
     return {"error": "Device not found or disconnect failed", "address": req.address}
-
 
 @app.post("/api/bluetooth/remove")
 async def remove_bluetooth_device(req: PairRequest):
@@ -357,25 +448,21 @@ async def remove_bluetooth_device(req: PairRequest):
         return {"status": "removed", "address": req.address}
     return {"error": "Device not found or removal failed", "address": req.address}
 
-
 @app.post("/api/controllers/disconnect-all")
 async def disconnect_all_controllers():
     count = await bluez_manager.disconnect_all_controllers()
     return {"disconnected": count}
-
 
 @app.post("/api/controllers/remove-all")
 async def remove_all_controllers():
     count = await bluez_manager.remove_all_controllers()
     return {"removed": count}
 
-
 # --- Emulator endpoints ---
 
 @app.get("/api/emulators")
 async def get_emulators():
     return await database.get_all_emulator_configs()
-
 
 @app.put("/api/emulators/{name}")
 async def update_emulator(name: str, update: EmulatorConfigUpdate):
@@ -386,86 +473,15 @@ async def update_emulator(name: str, update: EmulatorConfigUpdate):
         return result
     return {"error": "Emulator not found"}
 
-
-# Hardcoded SDL2 device names for Dolphin.
-# SDL2 may rename controllers via HIDAPI or gamecontrollerdb, producing a name
-# that differs from what evdev/kernel reports. Keyed by (vendor_id, product_id)
-# or by SDL2 GUID (used when vendor/product are 0, e.g. BT-HID controllers).
-_DOLPHIN_NAME_BY_VID_PID: dict[tuple[int, int], str] = {
-    (0x057E, 0x2009): "Nintendo Switch Pro Controller",
-    (0x045E, 0x0B13): "Xbox Series X Controller",
-}
-_DOLPHIN_NAME_BY_GUID: dict[str, str] = {
-    # Lic Pro Controller: BT-HID reports vendor=0/product=0 in evdev, but SDL2
-    # HIDAPI identifies it via this GUID as a Nintendo Switch Pro Controller.
-    "030000007e0500000920000000006806": "Nintendo Switch Pro Controller",
-}
-
-
-def _dolphin_sdl_name(r) -> str:
-    """Return the SDL2 device name Dolphin will use for this controller."""
-    if r.vendor_id and r.product_id:
-        name = _DOLPHIN_NAME_BY_VID_PID.get((r.vendor_id, r.product_id))
-        if name:
-            return name
-    if r.guid:
-        name = _DOLPHIN_NAME_BY_GUID.get(r.guid)
-        if name:
-            return name
-    return r.name
-
-
-def _is_wiimote(controller) -> bool:
-    """Return True if this controller should be mapped as a Wiimote.
-
-    Matches actual Wiimotes (Nintendo vendor + product) and anything whose
-    evdev name contains 'wiimote' or 'wii remote'.
-    """
-    if controller.vendor_id == 0x057E and controller.product_id == 0x0306:
-        return True
-    name_lower = controller.name.lower()
-    return "wiimote" in name_lower or "wii remote" in name_lower
-
-
-def _build_dolphin_controllers(
-    filtered: list,
-    sdl_name_counts: dict[str, int],
-) -> list[tuple]:
-    """Build (unique_id, SDLInfo) pairs for a Dolphin writer.
-
-    Uses the hardcoded SDL2 device name lookup rather than the evdev name, and
-    computes per-SDL-name port indices to match how Dolphin/SDL2 enumerates joysticks.
-    """
-    result = []
-    for r in filtered:
-        sdl_name = _dolphin_sdl_name(r)
-        port = sdl_name_counts.get(sdl_name, 0)
-        sdl_name_counts[sdl_name] = port + 1
-        sdl_info = SDLInfo(
-            guid=r.guid or "",
-            port=port,
-            vendor_id=r.vendor_id or 0,
-            product_id=r.product_id or 0,
-            device_name=sdl_name,
-        )
-        result.append((r.unique_id, sdl_info))
-    return result
-
-
 @app.post("/api/emulators/apply")
 async def apply_config(req: ApplyConfigRequest = ApplyConfigRequest()):
-    """Write controller config to enabled emulators. If req.emulator is set, only that one.
-
-    Special values for req.emulator:
-      "dolphin"     – writes both GCPadNew.ini and WiimoteNew.ini, routing each
-                      ready controller to the right file based on whether it is a
-                      Wiimote (vendor 0x057E / product 0x0306, or name match).
-      "dolphin_gc"  – writes only GCPadNew.ini with all ready controllers.
-      "dolphin_wii" – writes only WiimoteNew.ini with all ready controllers.
-    """
+    """Write controller config to enabled emulators. If req.emulator is set, only that one."""
     ready = state_manager.get_ready_list()
     if not ready:
         return {"error": "No controllers ready"}
+
+    # Resolve ports before applying
+    ready = _resolve_mesen_ports(ready)
 
     emulators = await database.get_all_emulator_configs()
     results = {}
@@ -474,8 +490,6 @@ async def apply_config(req: ApplyConfigRequest = ApplyConfigRequest()):
         if not emu.enabled:
             continue
 
-        # Filter by requested emulator.
-        # "dolphin" is a virtual alias that covers both dolphin_gc and dolphin_wii.
         if req.emulator is not None:
             if req.emulator == "dolphin":
                 if emu.emulator_name not in ("dolphin_gc", "dolphin_wii"):
@@ -484,7 +498,6 @@ async def apply_config(req: ApplyConfigRequest = ApplyConfigRequest()):
                 continue
 
         if emu.emulator_name == "yuzu":
-            # Yuzu uses GUID + per-GUID port index
             guid_counts: dict[str, int] = {}
             controllers_with_info = []
             for r in ready:
@@ -502,23 +515,19 @@ async def apply_config(req: ApplyConfigRequest = ApplyConfigRequest()):
                 else:
                     controllers_with_info.append((r.unique_id, None))
             success = yuzu_writer.write_config(emu.config_path, controllers_with_info)
-            results[emu.emulator_name] = "ok" if success else "error"
+            results["yuzu"] = "ok" if success else "error"
 
         elif emu.emulator_name in ("dolphin_gc", "dolphin_wii"):
-            # When called via the "dolphin" alias, route controllers by type.
-            # When called directly, pass all ready controllers unchanged.
+            if "_dolphin_sdl_counts" not in results:
+                results["_dolphin_sdl_counts"] = {}
+            sdl_counts = results["_dolphin_sdl_counts"]
+            
+            filtered = ready
             if req.emulator == "dolphin":
                 if emu.emulator_name == "dolphin_gc":
                     filtered = [r for r in ready if not _is_wiimote(r)]
                 else:
                     filtered = [r for r in ready if _is_wiimote(r)]
-                # Share the per-alias counter across gc/wii so SDL indices stay consistent.
-                if "_dolphin_sdl_counts" not in results:
-                    results["_dolphin_sdl_counts"] = {}
-                sdl_counts = results["_dolphin_sdl_counts"]
-            else:
-                filtered = ready
-                sdl_counts = {}
 
             controllers_with_info = _build_dolphin_controllers(filtered, sdl_counts)
             writer = dolphin_gc_writer if emu.emulator_name == "dolphin_gc" else dolphin_wii_writer
@@ -526,31 +535,24 @@ async def apply_config(req: ApplyConfigRequest = ApplyConfigRequest()):
             results[emu.emulator_name] = "ok" if success else "error"
 
         elif emu.emulator_name == "mesen":
-            # Mesen uses its own integer ID scheme
             controllers_with_info = []
             for r in ready:
                 sdl_info = SDLInfo(
                     guid=r.guid or "",
-                    port=0, # Not used by MesenWriter yet
+                    port=r.port if r.port is not None else 0,
                     vendor_id=r.vendor_id or 0,
                     product_id=r.product_id or 0,
                     device_name=r.name,
                 )
-                controllers_with_info.append((r.unique_id, sdl_info))
+                # We can reuse the device_name field or similar to pass extra flags, 
+                # but better to update SDLInfo or just use another way.
+                # Let's add tr2_is_start to SDLInfo in device_matcher.py
+                controllers_with_info.append((r.unique_id, sdl_info, r.tr2_is_start))
             success = mesen_writer.write_config(emu.config_path, controllers_with_info)
-            results[emu.emulator_name] = "ok" if success else "error"
+            results["mesen"] = "ok" if success else "error"
 
-        elif emu.emulator_name in ("desmume", "parallel"):
-            # TODO: Implement specific writers for these emulators
-            results[emu.emulator_name] = "ok"
-
-    # Remove internal bookkeeping key before returning
     results.pop("_dolphin_sdl_counts", None)
-
     return {"results": results}
-
-
-# --- Asset endpoints ---
 
 @app.get("/api/assets/images")
 async def list_images():
@@ -558,16 +560,13 @@ async def list_images():
         return sorted(f.name for f in config.IMAGES_DIR.iterdir() if f.is_file())
     return []
 
-
 @app.get("/api/assets/sounds")
 async def list_sounds():
     if config.SOUNDS_DIR.exists():
         return sorted(f.name for f in config.SOUNDS_DIR.iterdir() if f.is_file())
     return []
 
-
 _NO_CACHE = {"Cache-Control": "no-store"}
-
 
 @app.get("/assets/images/{filename}")
 async def serve_image(filename: str):
@@ -576,14 +575,12 @@ async def serve_image(filename: str):
         return FileResponse(path, headers=_NO_CACHE)
     return FileResponse(config.IMAGES_DIR / "default.png", headers=_NO_CACHE)
 
-
 @app.get("/assets/sounds/{filename}")
 async def serve_sound(filename: str):
     path = config.SOUNDS_DIR / filename
     if path.exists() and path.is_file():
         return FileResponse(path, headers=_NO_CACHE)
     return FileResponse(config.SOUNDS_DIR / "default.mp3", headers=_NO_CACHE)
-
 
 @app.get("/assets/ui-sounds/{filename}")
 async def serve_ui_sound(filename: str):

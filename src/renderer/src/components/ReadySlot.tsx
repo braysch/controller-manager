@@ -28,8 +28,16 @@ export default function ReadySlot({ controller, slotIndex, poppingControllers }:
 
   return (
     <div className="flex flex-col items-center">
-      <div className="flex flex-col items-center justify-between rounded-xl border-2 border-blue-500/50 bg-gray-800 p-3 w-full aspect-square max-w-[400px]">
+      <div className="flex flex-col items-center justify-between rounded-xl border-2 border-blue-500/50 bg-gray-800 p-3 w-full aspect-square max-w-[400px] relative">
         <PlayerIndicator playerNumber={slotIndex + 1} />
+        
+        {/* Debug: Mesen Pad Number */}
+        <div className="absolute top-2 right-2 bg-black/60 px-2 py-0.5 rounded-md border border-white/20">
+          <span className="text-[10px] font-mono text-blue-400 uppercase tracking-tighter">
+            Pad {controller.port !== undefined ? controller.port + 1 : '?'}
+          </span>
+        </div>
+
         {isCombined && controller.component_imgs ? (
           <div className={`flex items-center justify-center flex-1 w-full py-1  min-h-0 ${isPopping ? 'controller-pop' : ''}`}>
             {controller.component_imgs.map((img, i) => (

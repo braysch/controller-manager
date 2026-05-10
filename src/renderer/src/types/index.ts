@@ -11,6 +11,8 @@ export interface Controller {
   paired_but_disconnected?: boolean
   guid?: string
   port?: number
+  pad_length: number
+  tr2_is_start: boolean
 }
 
 export interface ReadyController extends Controller {
@@ -31,6 +33,8 @@ export interface ControllerProfile {
   guid_override?: string
   bluetooth_address?: string
   start_button?: number
+  pad_length: number
+  tr2_is_start: boolean
 }
 
 export interface EmulatorConfig {

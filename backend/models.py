@@ -12,7 +12,9 @@ class ControllerProfile(BaseModel):
     product_id: Optional[int] = None
     guid_override: Optional[str] = None
     bluetooth_address: Optional[str] = None
-    start_button: Optional[int] = None  # Inherited from controller type default
+    start_button: Optional[int] = None
+    pad_length: int = 1
+    tr2_is_start: bool = False
 
 
 class ControllerProfileUpdate(BaseModel):
@@ -20,6 +22,8 @@ class ControllerProfileUpdate(BaseModel):
     img_src: Optional[str] = None
     snd_src: Optional[str] = None
     guid_override: Optional[str] = None
+    pad_length: Optional[int] = None
+    tr2_is_start: Optional[bool] = None
 
 
 class ConnectedController(BaseModel):
@@ -35,6 +39,8 @@ class ConnectedController(BaseModel):
     paired_but_disconnected: bool = False
     guid: Optional[str] = None
     port: Optional[int] = None
+    pad_length: int = 1
+    tr2_is_start: bool = False
 
 
 class ReadyController(BaseModel):
@@ -53,6 +59,8 @@ class ReadyController(BaseModel):
     component_unique_ids: Optional[list[str]] = None
     component_names: Optional[list[str]] = None
     component_imgs: Optional[list[str]] = None
+    pad_length: int = 1
+    tr2_is_start: bool = False
 
 
 class MoveToReadyRequest(BaseModel):

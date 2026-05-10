@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, protocol, ipcMain } from 'electron'
+import { app, shell, BrowserWindow, protocol, ipcMain, dialog } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { PythonManager } from './python-manager'
@@ -71,9 +71,28 @@ app.whenReady().then(() => {
 
   ipcMain.handle('get-launch-paths', () => getLaunchPaths())
 
-  ipcMain.on('quit-and-launch', () => {
-    fs.writeFileSync('/tmp/controller-manager-launch', '')
+  ipcMain.on('quit-and-launch', (_, gamePath?: string | null) => {
+    fs.writeFileSync('/tmp/controller-manager-launch', gamePath ?? '')
     app.quit()
+  })
+
+  ipcMain.handle('select-game', async () => {
+    const result = await dialog.showOpenDialog({
+      properties: ['openFile'],
+      title: 'Select Game (ROM)',
+      filters: [
+        { name: 'ROMs', extensions: ['nes', 'sfc', 'smc', 'gb', 'gbc', 'gba', 'n64', 'z64', 'v64'] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    })
+    if (result.canceled || result.filePaths.length === 0) {
+      return null
+    }
+    const gamePath = result.filePaths[0]
+    return {
+      gamePath,
+      gameFolder: path.dirname(gamePath)
+    }
   })
 
   ipcMain.handle('read-metadata', async (_, gameFolder: string) => {

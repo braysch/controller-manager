@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS controllers (
     product_id INTEGER,
     guid_override TEXT,
     bluetooth_address TEXT,
+    pad_length INTEGER DEFAULT 1,
+    tr2_is_start INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -46,10 +48,6 @@ CREATE TABLE IF NOT EXISTS controller_type_defaults (
 """
 
 # Seed data: (name_pattern, img_src, snd_src, vendor_id, product_id, guid_override, start_button)
-# guid_override: hardcoded SDL2 GUID for controllers where evdev GUID doesn't match
-# (e.g. BT controllers where SDL2 uses HIDAPI and generates a different GUID)
-# start_button: evdev button code for the "start software" button; None defaults to BTN_START (315).
-#   Use BTN_TR2 (313) for controllers where the Start/+ button maps to that code.
 _BTN_START = 315
 _BTN_TR2 = 313
 SEED_TYPE_DEFAULTS = [
@@ -61,13 +59,9 @@ SEED_TYPE_DEFAULTS = [
     ("Joy-Con (R)", "joycon_r.png", "switch.mp3", 0x057E, 0x2007, None, None),
     ("Joy-Con (L+R)", "joycon_l.png", "switch.mp3", None, None, None, None),
     ("GameCube Controller Adapter", "gamecube.png", "switch_gamecube.mp3", 0x057E, 0x0337, None, None),
-    # Lic Pro Controller: BT HID reports vendor=0/product=0, but SDL2 HIDAPI
-    # identifies it as a Switch Pro Controller with this GUID.
-    # BTN_TR2 is the Start/+ button on this controller.
     ("Lic Pro Controller", "switch_gamecube.png", "switch_gamecube.mp3", None, None, "030000007e0500000920000000006806", _BTN_TR2),
     ("DualShock 4", "default.png", "default.mp3", 0x054C, 0x09CC, None, None),
     ("DualSense", "default.png", "default.mp3", 0x054C, 0x0CE6, None, None),
-    # SNES Controller: BTN_TR2 is the Start/+ button on this controller.
     ("SNES Controller", "snes.png", "snes.wav", 0x057E, 0x2017, None, _BTN_TR2),
     ("8BitDo", "default.png", "default.mp3", None, None, None, None),
 ]
@@ -99,7 +93,6 @@ async def init_db() -> None:
 
 async def _migrate(db: aiosqlite.Connection) -> None:
     """Handle schema creation and migration from old format."""
-    # Check if old schema exists (has 'mac_address' column in controllers)
     old_schema = False
     try:
         cursor = await db.execute("PRAGMA table_info(controllers)")
@@ -113,7 +106,6 @@ async def _migrate(db: aiosqlite.Connection) -> None:
     if old_schema:
         await _migrate_from_old(db)
     else:
-        # Check if tables need guid_override columns
         needs_type_rebuild = False
         needs_controller_guid = False
 
@@ -159,12 +151,11 @@ async def _migrate(db: aiosqlite.Connection) -> None:
         try:
             await db.execute("ALTER TABLE controllers ADD COLUMN bluetooth_address TEXT")
         except Exception:
-            pass  # column already exists
+            pass
 
         if needs_type_start_button:
             try:
                 await db.execute("ALTER TABLE controller_type_defaults ADD COLUMN start_button INTEGER")
-                # Backfill BTN_TR2 for controllers that need it
                 for name_pattern, *_, start_button in SEED_TYPE_DEFAULTS:
                     if start_button is not None:
                         await db.execute(
@@ -174,7 +165,13 @@ async def _migrate(db: aiosqlite.Connection) -> None:
             except Exception:
                 pass
 
-    # Check/set schema version
+        try:
+            await db.execute("ALTER TABLE controllers ADD COLUMN pad_length INTEGER DEFAULT 1")
+        except Exception: pass
+        try:
+            await db.execute("ALTER TABLE controllers ADD COLUMN tr2_is_start INTEGER DEFAULT 0")
+        except Exception: pass
+
     cursor = await db.execute("SELECT COUNT(*) FROM schema_version")
     row = await cursor.fetchone()
     if row[0] == 0:
@@ -182,14 +179,12 @@ async def _migrate(db: aiosqlite.Connection) -> None:
     else:
         await db.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
 
-    # Seed type defaults
     for name_pattern, img_src, snd_src, vendor_id, product_id, guid_override, start_button in SEED_TYPE_DEFAULTS:
         await db.execute(
             "INSERT OR IGNORE INTO controller_type_defaults (name_pattern, img_src, snd_src, vendor_id, product_id, guid_override, start_button) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (name_pattern, img_src, snd_src, vendor_id, product_id, guid_override, start_button),
         )
 
-    # Seed emulator configs
     import os
     for emu_name, config_path in SEED_EMULATORS:
         expanded = os.path.expanduser(config_path)
@@ -231,11 +226,11 @@ async def _migrate_from_old(db: aiosqlite.Connection) -> None:
 # --- CRUD operations ---
 
 async def get_profiles_by_product(vendor_id: int, product_id: int) -> list[ControllerProfile]:
-    """Return all controller profiles matching vendor_id + product_id, most recently updated first."""
+    """Return all controller profiles matching vendor_id + product_id."""
     db = await get_db()
     try:
         cursor = await db.execute(
-            "SELECT unique_id, default_name, custom_name, img_src, snd_src, vendor_id, product_id, guid_override, bluetooth_address "
+            "SELECT unique_id, default_name, custom_name, img_src, snd_src, vendor_id, product_id, guid_override, bluetooth_address, pad_length, tr2_is_start "
             "FROM controllers WHERE vendor_id = ? AND product_id = ? ORDER BY updated_at DESC",
             (vendor_id, product_id),
         )
@@ -251,6 +246,8 @@ async def get_profiles_by_product(vendor_id: int, product_id: int) -> list[Contr
                 product_id=r[6],
                 guid_override=r[7],
                 bluetooth_address=r[8],
+                pad_length=r[9],
+                tr2_is_start=bool(r[10]),
             )
             for r in rows
         ]
@@ -262,7 +259,7 @@ async def get_profile(unique_id: str) -> Optional[ControllerProfile]:
     db = await get_db()
     try:
         cursor = await db.execute(
-            "SELECT unique_id, default_name, custom_name, img_src, snd_src, vendor_id, product_id, guid_override, bluetooth_address FROM controllers WHERE unique_id = ?",
+            "SELECT unique_id, default_name, custom_name, img_src, snd_src, vendor_id, product_id, guid_override, bluetooth_address, pad_length, tr2_is_start FROM controllers WHERE unique_id = ?",
             (unique_id,),
         )
         row = await cursor.fetchone()
@@ -278,6 +275,8 @@ async def get_profile(unique_id: str) -> Optional[ControllerProfile]:
             product_id=row[6],
             guid_override=row[7],
             bluetooth_address=row[8],
+            pad_length=row[9],
+            tr2_is_start=bool(row[10]),
         )
     finally:
         await db.close()
@@ -291,33 +290,29 @@ async def upsert_profile(
     img_src: Optional[str] = None,
     snd_src: Optional[str] = None,
     bluetooth_address: Optional[str] = None,
+    pad_length: int = 1,
+    tr2_is_start: bool = False,
 ) -> ControllerProfile:
-    """Insert or update a controller profile. Returns the profile."""
+    """Insert or update a controller profile."""
     db = await get_db()
     try:
-        existing = await db.execute(
-            "SELECT id FROM controllers WHERE unique_id = ?", (unique_id,)
-        )
+        existing = await db.execute("SELECT id FROM controllers WHERE unique_id = ?", (unique_id,))
         row = await existing.fetchone()
 
         if row:
+            updates = []
+            params = []
             if vendor_id is not None:
-                await db.execute(
-                    "UPDATE controllers SET vendor_id = ?, updated_at = CURRENT_TIMESTAMP WHERE unique_id = ?",
-                    (vendor_id, unique_id),
-                )
+                updates.append("vendor_id = ?"); params.append(vendor_id)
             if product_id is not None:
-                await db.execute(
-                    "UPDATE controllers SET product_id = ?, updated_at = CURRENT_TIMESTAMP WHERE unique_id = ?",
-                    (product_id, unique_id),
-                )
+                updates.append("product_id = ?"); params.append(product_id)
             if bluetooth_address is not None:
-                await db.execute(
-                    "UPDATE controllers SET bluetooth_address = ?, updated_at = CURRENT_TIMESTAMP WHERE unique_id = ?",
-                    (bluetooth_address, unique_id),
-                )
+                updates.append("bluetooth_address = ?"); params.append(bluetooth_address)
+            
+            if updates:
+                params.append(unique_id)
+                await db.execute(f"UPDATE controllers SET {', '.join(updates)}, updated_at = CURRENT_TIMESTAMP WHERE unique_id = ?", params)
         else:
-            # Determine default assets and guid_override from type_defaults
             resolved_img = img_src or "default.png"
             resolved_snd = snd_src or "default.mp3"
             resolved_guid = None
@@ -330,8 +325,8 @@ async def upsert_profile(
                     resolved_guid = type_default.guid_override
 
             await db.execute(
-                "INSERT INTO controllers (unique_id, default_name, img_src, snd_src, vendor_id, product_id, guid_override, bluetooth_address) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (unique_id, default_name, resolved_img, resolved_snd, vendor_id, product_id, resolved_guid, bluetooth_address),
+                "INSERT INTO controllers (unique_id, default_name, img_src, snd_src, vendor_id, product_id, guid_override, bluetooth_address, pad_length, tr2_is_start) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (unique_id, default_name, resolved_img, resolved_snd, vendor_id, product_id, resolved_guid, bluetooth_address, pad_length, int(tr2_is_start)),
             )
 
         await db.commit()
@@ -347,31 +342,32 @@ async def update_profile_fields(
     img_src: Optional[str] = None,
     snd_src: Optional[str] = None,
     guid_override: Optional[str] = ...,
+    pad_length: Optional[int] = None,
+    tr2_is_start: Optional[bool] = None,
 ) -> Optional[ControllerProfile]:
     db = await get_db()
     try:
         sets = []
         params = []
         if custom_name is not ...:
-            sets.append("custom_name = ?")
-            params.append(custom_name)
+            sets.append("custom_name = ?"); params.append(custom_name)
         if img_src is not None:
-            sets.append("img_src = ?")
-            params.append(img_src)
+            sets.append("img_src = ?"); params.append(img_src)
         if snd_src is not None:
-            sets.append("snd_src = ?")
-            params.append(snd_src)
+            sets.append("snd_src = ?"); params.append(snd_src)
         if guid_override is not ...:
-            sets.append("guid_override = ?")
-            params.append(guid_override)
+            sets.append("guid_override = ?"); params.append(guid_override)
+        if pad_length is not None:
+            sets.append("pad_length = ?"); params.append(pad_length)
+        if tr2_is_start is not None:
+            sets.append("tr2_is_start = ?"); params.append(int(tr2_is_start))
 
         if not sets:
             return await get_profile(unique_id)
 
         sets.append("updated_at = CURRENT_TIMESTAMP")
         params.append(unique_id)
-        query = f"UPDATE controllers SET {', '.join(sets)} WHERE unique_id = ?"
-        await db.execute(query, params)
+        await db.execute(f"UPDATE controllers SET {', '.join(sets)} WHERE unique_id = ?", params)
         await db.commit()
     finally:
         await db.close()
@@ -380,7 +376,7 @@ async def update_profile_fields(
 
 
 async def delete_profile(unique_id: str) -> bool:
-    """Delete a controller profile. Returns True if successful."""
+    """Delete a controller profile."""
     db = await get_db()
     try:
         cursor = await db.execute("DELETE FROM controllers WHERE unique_id = ?", (unique_id,))
@@ -394,7 +390,7 @@ async def get_all_profiles() -> list[ControllerProfile]:
     db = await get_db()
     try:
         cursor = await db.execute(
-            "SELECT unique_id, default_name, custom_name, img_src, snd_src, vendor_id, product_id, guid_override, bluetooth_address FROM controllers ORDER BY id"
+            "SELECT unique_id, default_name, custom_name, img_src, snd_src, vendor_id, product_id, guid_override, bluetooth_address, pad_length, tr2_is_start FROM controllers ORDER BY id"
         )
         rows = await cursor.fetchall()
         profiles = [
@@ -408,14 +404,13 @@ async def get_all_profiles() -> list[ControllerProfile]:
                 product_id=r[6],
                 guid_override=r[7],
                 bluetooth_address=r[8],
+                pad_length=r[9],
+                tr2_is_start=bool(r[10]),
             )
             for r in rows
         ]
 
-        # Enrich profiles with start_button from their matching type default
-        td_cursor = await db.execute(
-            "SELECT vendor_id, product_id, name_pattern, start_button FROM controller_type_defaults"
-        )
+        td_cursor = await db.execute("SELECT vendor_id, product_id, name_pattern, start_button FROM controller_type_defaults")
         type_defaults = await td_cursor.fetchall()
         vid_pid_map = {(r[0], r[1]): r[3] for r in type_defaults if r[0] is not None}
         name_map = [(r[2].lower(), r[3]) for r in type_defaults if r[0] is None]
@@ -426,9 +421,7 @@ async def get_all_profiles() -> list[ControllerProfile]:
             else:
                 for name_pattern, start_btn in name_map:
                     if name_pattern in p.default_name.lower():
-                        p.start_button = start_btn
-                        break
-
+                        p.start_button = start_btn; break
         return profiles
     finally:
         await db.close()
@@ -440,128 +433,60 @@ async def update_type_default_start_button(
     default_name: str,
     start_button: Optional[int],
 ) -> bool:
-    """Set the start_button for the type default that matches this controller."""
     db = await get_db()
     try:
         if vendor_id is not None and product_id is not None:
-            await db.execute(
-                "UPDATE controller_type_defaults SET start_button = ? WHERE vendor_id = ? AND product_id = ?",
-                (start_button, vendor_id, product_id),
-            )
+            await db.execute("UPDATE controller_type_defaults SET start_button = ? WHERE vendor_id = ? AND product_id = ?", (start_button, vendor_id, product_id))
         else:
-            # Find matching name_pattern for null vendor/product types (e.g. Lic Pro Controller)
-            cursor = await db.execute(
-                "SELECT name_pattern FROM controller_type_defaults WHERE vendor_id IS NULL"
-            )
+            cursor = await db.execute("SELECT name_pattern FROM controller_type_defaults WHERE vendor_id IS NULL")
             name_rows = await cursor.fetchall()
             for row in name_rows:
                 if row[0].lower() in default_name.lower():
-                    await db.execute(
-                        "UPDATE controller_type_defaults SET start_button = ? WHERE name_pattern = ? AND vendor_id IS NULL",
-                        (start_button, row[0]),
-                    )
+                    await db.execute("UPDATE controller_type_defaults SET start_button = ? WHERE name_pattern = ? AND vendor_id IS NULL", (start_button, row[0]))
                     break
-        await db.commit()
-        return True
-    except Exception:
-        return False
-    finally:
-        await db.close()
+        await db.commit(); return True
+    except Exception: return False
+    finally: await db.close()
 
 
-async def get_type_default(
-    device_name: str,
-    vendor_id: Optional[int] = None,
-    product_id: Optional[int] = None,
-) -> Optional[ControllerTypeDefault]:
-    """Find a type default matching by vendor:product first, then by name pattern."""
+async def get_type_default(device_name: str, vendor_id: Optional[int] = None, product_id: Optional[int] = None) -> Optional[ControllerTypeDefault]:
     db = await get_db()
     try:
-        # First try vendor:product match (most reliable)
         if vendor_id is not None and product_id is not None:
-            cursor = await db.execute(
-                "SELECT name_pattern, img_src, snd_src, vendor_id, product_id, guid_override, start_button FROM controller_type_defaults WHERE vendor_id = ? AND product_id = ?",
-                (vendor_id, product_id),
-            )
+            cursor = await db.execute("SELECT name_pattern, img_src, snd_src, vendor_id, product_id, guid_override, start_button FROM controller_type_defaults WHERE vendor_id = ? AND product_id = ?", (vendor_id, product_id))
             row = await cursor.fetchone()
-            if row:
-                return ControllerTypeDefault(
-                    name_pattern=row[0],
-                    img_src=row[1] or "default.png",
-                    snd_src=row[2] or "default.mp3",
-                    vendor_id=row[3],
-                    product_id=row[4],
-                    guid_override=row[5],
-                    start_button=row[6],
-                )
+            if row: return ControllerTypeDefault(name_pattern=row[0], img_src=row[1] or "default.png", snd_src=row[2] or "default.mp3", vendor_id=row[3], product_id=row[4], guid_override=row[5], start_button=row[6])
 
-        # Fallback to name pattern matching
-        cursor = await db.execute(
-            "SELECT name_pattern, img_src, snd_src, vendor_id, product_id, guid_override, start_button FROM controller_type_defaults WHERE vendor_id IS NULL"
-        )
+        cursor = await db.execute("SELECT name_pattern, img_src, snd_src, vendor_id, product_id, guid_override, start_button FROM controller_type_defaults WHERE vendor_id IS NULL")
         rows = await cursor.fetchall()
         for row in rows:
             if row[0].lower() in device_name.lower():
-                return ControllerTypeDefault(
-                    name_pattern=row[0],
-                    img_src=row[1] or "default.png",
-                    snd_src=row[2] or "default.mp3",
-                    vendor_id=row[3],
-                    product_id=row[4],
-                    guid_override=row[5],
-                    start_button=row[6],
-                )
+                return ControllerTypeDefault(name_pattern=row[0], img_src=row[1] or "default.png", snd_src=row[2] or "default.mp3", vendor_id=row[3], product_id=row[4], guid_override=row[5], start_button=row[6])
         return None
-    finally:
-        await db.close()
+    finally: await db.close()
 
 
 async def get_all_emulator_configs() -> list[EmulatorConfig]:
     db = await get_db()
     try:
-        cursor = await db.execute(
-            "SELECT id, emulator_name, config_path, enabled FROM emulator_configs ORDER BY id"
-        )
+        cursor = await db.execute("SELECT id, emulator_name, config_path, enabled FROM emulator_configs ORDER BY id")
         rows = await cursor.fetchall()
-        return [
-            EmulatorConfig(id=r[0], emulator_name=r[1], config_path=r[2], enabled=bool(r[3]))
-            for r in rows
-        ]
-    finally:
-        await db.close()
+        return [EmulatorConfig(id=r[0], emulator_name=r[1], config_path=r[2], enabled=bool(r[3])) for r in rows]
+    finally: await db.close()
 
 
-async def update_emulator_config(
-    emulator_name: str,
-    config_path: Optional[str] = None,
-    enabled: Optional[bool] = None,
-) -> Optional[EmulatorConfig]:
+async def update_emulator_config(emulator_name: str, config_path: Optional[str] = None, enabled: Optional[bool] = None) -> Optional[EmulatorConfig]:
     db = await get_db()
     try:
-        sets = []
-        params = []
-        if config_path is not None:
-            sets.append("config_path = ?")
-            params.append(config_path)
-        if enabled is not None:
-            sets.append("enabled = ?")
-            params.append(int(enabled))
-
-        if not sets:
-            return None
-
+        sets = []; params = []
+        if config_path is not None: sets.append("config_path = ?"); params.append(config_path)
+        if enabled is not None: sets.append("enabled = ?"); params.append(int(enabled))
+        if not sets: return None
         params.append(emulator_name)
-        query = f"UPDATE emulator_configs SET {', '.join(sets)} WHERE emulator_name = ?"
-        await db.execute(query, params)
+        await db.execute(f"UPDATE emulator_configs SET {', '.join(sets)} WHERE emulator_name = ?", params)
         await db.commit()
-
-        cursor = await db.execute(
-            "SELECT id, emulator_name, config_path, enabled FROM emulator_configs WHERE emulator_name = ?",
-            (emulator_name,),
-        )
+        cursor = await db.execute("SELECT id, emulator_name, config_path, enabled FROM emulator_configs WHERE emulator_name = ?", (emulator_name,))
         row = await cursor.fetchone()
-        if not row:
-            return None
+        if not row: return None
         return EmulatorConfig(id=row[0], emulator_name=row[1], config_path=row[2], enabled=bool(row[3]))
-    finally:
-        await db.close()
+    finally: await db.close()

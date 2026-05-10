@@ -16,6 +16,7 @@ export default function ControllerProfileEditor({ open }: ControllerProfileEdito
   const [editSnd, setEditSnd] = useState('')
   const [editGuid, setEditGuid] = useState('')
   const [editTr2IsStart, setEditTr2IsStart] = useState(false)
+  const [editPadLength, setEditPadLength] = useState(1)
 
   const MAC_RE = /^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$/i
   const resolveMac = (profile: ControllerProfile) =>
@@ -35,7 +36,8 @@ export default function ControllerProfileEditor({ open }: ControllerProfileEdito
     setEditImg(profile.img_src)
     setEditSnd(profile.snd_src)
     setEditGuid(profile.guid_override || '')
-    setEditTr2IsStart(profile.start_button === 313)
+    setEditTr2IsStart(profile.tr2_is_start)
+    setEditPadLength(profile.pad_length)
   }
 
   const saveEdit = async () => {
@@ -44,9 +46,10 @@ export default function ControllerProfileEditor({ open }: ControllerProfileEdito
       custom_name: editName || null,
       img_src: editImg,
       snd_src: editSnd,
-      guid_override: editGuid || null
+      guid_override: editGuid || null,
+      pad_length: editPadLength,
+      tr2_is_start: editTr2IsStart
     })
-    await api.updateProfileStartButton(editing, editTr2IsStart)
     setProfiles(
       profiles.map((p) =>
         p.unique_id === editing
@@ -56,7 +59,8 @@ export default function ControllerProfileEditor({ open }: ControllerProfileEdito
               img_src: editImg,
               snd_src: editSnd,
               guid_override: editGuid || undefined,
-              start_button: editTr2IsStart ? 313 : undefined
+              tr2_is_start: editTr2IsStart,
+              pad_length: editPadLength
             }
           : p
       )
@@ -136,6 +140,15 @@ export default function ControllerProfileEditor({ open }: ControllerProfileEdito
                   <label className="flex items-center gap-2 cursor-pointer select-none">
                     <input
                       type="checkbox"
+                      checked={editPadLength === 2}
+                      onChange={(e) => setEditPadLength(e.target.checked ? 2 : 1)}
+                      className="rounded"
+                    />
+                    <span className="text-xs text-gray-400">Double Pad (Switch-Lite/Diswoe)</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
                       checked={editTr2IsStart}
                       onChange={(e) => setEditTr2IsStart(e.target.checked)}
                       className="rounded"
@@ -184,9 +197,14 @@ export default function ControllerProfileEditor({ open }: ControllerProfileEdito
                     {profile.guid_override && (
                       <div className="text-xs text-yellow-500 font-mono">GUID: {profile.guid_override}</div>
                     )}
-                    {profile.start_button === 313 && (
-                      <div className="text-xs text-blue-400">Start: ZR/TR2 button</div>
-                    )}
+                    <div className="flex gap-3 mt-1">
+                      {profile.pad_length === 2 && (
+                        <div className="text-[10px] text-purple-400 uppercase font-bold tracking-tighter">Double Pad</div>
+                      )}
+                      {profile.tr2_is_start && (
+                        <div className="text-[10px] text-blue-400 uppercase font-bold tracking-tighter">Start: ZR/TR2</div>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}

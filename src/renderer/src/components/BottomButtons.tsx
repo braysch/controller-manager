@@ -18,6 +18,8 @@ interface BottomButtonsProps {
   emulatorFolder: string | null
   manualEmulator: string | null
   onManualEmulatorChange: (value: string) => void
+  manualGame: string | null
+  onManualGameSelect: () => void
 }
 
 export default function BottomButtons({
@@ -28,7 +30,9 @@ export default function BottomButtons({
   gameFolder,
   emulatorFolder,
   manualEmulator,
-  onManualEmulatorChange
+  onManualEmulatorChange,
+  manualGame,
+  onManualGameSelect
 }: BottomButtonsProps): JSX.Element {
   return (
     <div className="flex items-center justify-center px-4 py-3 bg-gray-800 border-t border-gray-700">
@@ -49,17 +53,22 @@ export default function BottomButtons({
 
       <div className="flex gap-2 flex-1 justify-end items-center">
         {manualEmulator !== null && (
-          <select
-            value={manualEmulator}
-            onChange={(e) => onManualEmulatorChange(e.target.value)}
-            className="bg-gray-700 text-white text-xl rounded-sm px-3 py-2 border border-gray-600 cursor-pointer"
-          >
-            {EMULATOR_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
+          <>
+            <Button onClick={onManualGameSelect}>
+              {manualGame ? manualGame.split('/').pop() : 'Choose Game'}
+            </Button>
+            <select
+              value={manualEmulator}
+              onChange={(e) => onManualEmulatorChange(e.target.value)}
+              className="bg-gray-700 text-white text-xl rounded-sm px-3 py-2 border border-gray-600 cursor-pointer"
+            >
+              {EMULATOR_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </>
         )}
         <Button onClick={onReassign} disabled={!hasReady}>
           Reset Grip/Order
