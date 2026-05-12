@@ -71,7 +71,10 @@ class MesenConfigWriter(EmulatorConfigWriter):
             if "Gba_X" in m1: m1["X"] = m1["Gba_X"]
             if "Gba_Y" in m1: m1["Y"] = m1["Gba_Y"]
         
-        m2 = { "Up": 17, "Down": 16, "Left": 15, "Right": 14 }
+        # Mapping 2: Modern D-pad fallback. 
+        # Many modern controllers on Linux expose the D-pad as Axis 5 & 6.
+        # Up=29 (Axis 6-), Down=28 (Axis 6+), Left=27 (Axis 5-), Right=26 (Axis 5+)
+        m2 = { "Up": 29, "Down": 28, "Left": 27, "Right": 26 }
         return {"m1": m1, "m2": m2}
 
     def _build_mapping_dict(self, base: int, ids: dict, system: str) -> dict:
