@@ -23,28 +23,51 @@ class MesenConfigWriter(EmulatorConfigWriter):
     # 11=BTN_START, 14-17=left-stick axes, 26-29=D-pad via ABS_HAT0/BTN_DPAD_* only), so a
     # button/direction here only works if the physical controller actually reports the
     # matching evdev code for that slot.
-    # TriggerL/TriggerR are analog-trigger IDs, used where a controller has them.
+    #
+    # Each profile has a "default" table (console-invariant: D-pad, Select/Start,
+    # analog triggers - the same physical buttons regardless of what's running)
+    # and a "per_system" table for the face buttons (A/B/X/Y/L/R), which DO need
+    # to vary: Nintendo's own "which button is jump vs. run/fire" convention
+    # shifted across generations (NES: A=jump, B=run; SNES: B=jump, Y=run), so
+    # the same physical controller should feed different consoles' A/B/X/Y from
+    # different physical buttons to keep that feel natural. A system with no
+    # entry of its own falls back to a related one via _SYSTEM_FALLBACK (Gameboy
+    # -> Nes, Gba -> Snes) rather than repeating an identical table.
     CONTROLLER_PROFILES = {
         "xbox": {
-            "A": 1, "B": 0, "X": 4, "Y": 3, "L": 6, "R": 7,
-            "Up": 17, "Down": 16, "Left": 15, "Right": 14,
-            "Select": 10, "Start": 11,
-            "TriggerL": 55, "TriggerR": 56,
+            "default": {
+                "Select": 10, "Start": 11, "Up": 17, "Down": 16, "Left": 15, "Right": 14,
+                "TriggerL": 55, "TriggerR": 56,
+            },
+            "per_system": {
+                "Nes": {"A": 1, "B": 0},
+                "Snes": {"A": 1, "B": 0, "X": 4, "Y": 3, "L": 6, "R": 7},
+            },
         },
         "lic": {
-            "A": 1, "B": 0, "X": 3, "Y": 2, "L": 6, "R": 7,
-            "Up": 17, "Down": 16, "Left": 15, "Right": 14,
-            "Select": 8, "Start": 9,
+            "default": {"Select": 8, "Start": 9, "Up": 17, "Down": 16, "Left": 15, "Right": 14},
+            "per_system": {
+                "Nes": {"A": 1, "B": 0},
+                "Snes": {"A": 1, "B": 0, "X": 3, "Y": 2, "L": 6, "R": 7},
+            },
         },
         "snes": {
-            "A": 1, "B": 2, "X": 0, "Y": 3, "L": 6, "R": 7,
-            "Up": 17, "Down": 16, "Left": 15, "Right": 14,
-            "Select": 8, "Start": 9,
+            "default": {"Select": 8, "Start": 9, "Up": 17, "Down": 16, "Left": 15, "Right": 14},
+            "per_system": {
+                # A physical SNES pad's own A/B are the "wrong" natural fit for a
+                # 2-button NES game - Nintendo's own convention uses the pad's B
+                # (jump) and Y (run/fire) instead, since those sit where a 2-button
+                # controller's buttons naturally would.
+                "Nes": {"A": 2, "B": 3},
+                "Snes": {"A": 1, "B": 2, "X": 0, "Y": 3, "L": 6, "R": 7},
+            },
         },
         "diswoe": {
-            "A": 1, "B": 0, "X": 3, "Y": 4, "L": 8, "R": 9,
-            "Up": 17, "Down": 16, "Left": 15, "Right": 14,
-            "Select": 10, "Start": 11,
+            "default": {"Select": 10, "Start": 11, "Up": 17, "Down": 16, "Left": 15, "Right": 14},
+            "per_system": {
+                "Nes": {"A": 1, "B": 0},
+                "Snes": {"A": 1, "B": 0, "X": 3, "Y": 4, "L": 8, "R": 9},
+            },
         },
         # Wii Remote: Mesen's Linux button IDs are NOT an SDL/enumeration index — they're
         # a fixed internal enum hardcoded to specific evdev codes (see Mesen2's
@@ -64,20 +87,38 @@ class MesenConfigWriter(EmulatorConfigWriter):
         # confirming it only reads a D-pad via the classic hat-axis representation.
         # The Up/Down/Left/Right slot numbers below are still an unverified guess
         # (borrowed from AXIS_DPAD) pending confirmation via Mesen's own binding UI.
+        #
+        # The Wii Remote only has two buttons reachable in the sideways hold (1/2),
+        # so the bridge emits BOTH a 2-button-console code and a 4-button-console
+        # code for each of them simultaneously (see _WIIMOTE_TRANSLATE): 1 -> B and
+        # Y, 2 -> A and C. Which pair actually gets read depends entirely on which
+        # of these two per-system tables is in effect - so pressing 1/2 during an
+        # NES game never also fires anything from the Snes table and vice versa.
+        # Snes also fills in the remaining two face buttons (X/A) from the real
+        # Wii Remote A/B buttons, each of which similarly emits both its
+        # Nes/Gameboy code and its own exclusive Snes-only code.
         "wii": {
-            "A": 0, "B": 1,
-            "Select": 10, "Start": 11,
-            "Up": 29, "Down": 28, "Left": 27, "Right": 26,
+            "default": {"Select": 10, "Start": 11, "Up": 29, "Down": 28, "Left": 27, "Right": 26},
+            "per_system": {
+                "Nes": {"A": 0, "B": 1},
+                "Snes": {"Y": 4, "B": 2, "A": 6, "X": 5},
+            },
         },
         # Keyboard uses Mesen's absolute key IDs (Core/Shared/KeyDefinitions.h),
-        # not gamepad-base offsets. Layout: arrows = D-pad, Z/X = B/A, A/S = Y/X,
-        # Q/W = L/R, Space = Select, Enter = Start.
+        # not gamepad-base offsets, and doesn't vary by system. Layout: arrows =
+        # D-pad, Z/X = B/A, A/S = Y/X, Q/W = L/R, Space = Select, Enter = Start.
         "keyboard": {
-            "A": 67, "B": 69, "X": 62, "Y": 44, "L": 60, "R": 66,
-            "Up": 24, "Down": 26, "Left": 23, "Right": 25,
-            "Select": 18, "Start": 6,
+            "default": {
+                "A": 67, "B": 69, "X": 62, "Y": 44, "L": 60, "R": 66,
+                "Up": 24, "Down": 26, "Left": 23, "Right": 25,
+                "Select": 18, "Start": 6,
+            },
         },
     }
+
+    # A system with no per_system entry of its own reuses a related system's
+    # face-button table instead of repeating it verbatim.
+    SYSTEM_FALLBACK = {"Gameboy": "Nes", "Gba": "Snes"}
 
     # How each virtual Mesen controller pulls its buttons from a physical profile:
     # virtual button -> profile keys, tried in order.
@@ -111,7 +152,7 @@ class MesenConfigWriter(EmulatorConfigWriter):
         return self.GAMEPAD_BASE + (self.DEVICE_OFFSET * physical_port)
 
     def _get_profile(self, sdl_info: Optional[SDLInfo]) -> dict:
-        """Select the physical controller profile."""
+        """Select the physical controller profile spec (unresolved: default + per_system)."""
         name_lower = sdl_info.device_name.lower() if sdl_info else ""
         vid = sdl_info.vendor_id if sdl_info else 0
         pid = sdl_info.product_id if sdl_info else 0
@@ -129,6 +170,16 @@ class MesenConfigWriter(EmulatorConfigWriter):
         if "snes" in name_lower or (vid == 0x0079 and pid == 0x0126) or (vid == 0x057E and pid == 0x2017):
             return self.CONTROLLER_PROFILES["snes"]
         return self.CONTROLLER_PROFILES["xbox"]
+
+    def _resolve_profile(self, spec: dict, layout: str) -> dict:
+        """Merge a profile spec's console-invariant defaults with the face-button
+        table for this specific system (falling back per SYSTEM_FALLBACK if the
+        profile has no table of its own for it)."""
+        per_system = spec.get("per_system", {})
+        face = per_system.get(layout)
+        if face is None:
+            face = per_system.get(self.SYSTEM_FALLBACK.get(layout, layout), {})
+        return {**spec.get("default", {}), **face}
 
     def _layout_buttons(self, profile: dict, layout: str) -> dict:
         """Resolve a virtual controller layout to this profile's button IDs."""
@@ -158,10 +209,11 @@ class MesenConfigWriter(EmulatorConfigWriter):
 
     def _write_node(self, node: dict, layout: str, sdl_info: Optional[SDLInfo], player_index: int, template: Optional[dict] = None) -> None:
         """Write Mapping1-4 for one virtual controller node."""
-        profile = self._get_profile(sdl_info)
+        spec = self._get_profile(sdl_info)
+        profile = self._resolve_profile(spec, layout)
         m1 = self._layout_buttons(profile, layout)
 
-        if profile is self.CONTROLLER_PROFILES["keyboard"]:
+        if spec is self.CONTROLLER_PROFILES["keyboard"]:
             # Keyboard IDs are absolute; no axis d-pad or gamepad fallback slots
             # (Mapping2-4 were already zeroed by _clear_system).
             self._apply_mapping(node, "Mapping1", 0, m1, template)

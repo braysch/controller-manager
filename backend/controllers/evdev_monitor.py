@@ -21,8 +21,8 @@ _WIIMOTE_PRODUCT = 0x0306
 # much less universally-supported kernel addition that Mesen doesn't read at all
 # (confirmed: it didn't register in Mesen's own input listener).
 _WIIMOTE_BRIDGE_KEY_CAPS = [
-    ecodes.BTN_A, ecodes.BTN_B, ecodes.BTN_MODE,
-    ecodes.BTN_SELECT, ecodes.BTN_START,
+    ecodes.BTN_A, ecodes.BTN_B, ecodes.BTN_C, ecodes.BTN_Y, ecodes.BTN_Z, ecodes.BTN_TL,
+    ecodes.BTN_MODE, ecodes.BTN_SELECT, ecodes.BTN_START,
 ]
 _WIIMOTE_BRIDGE_ABS_CAPS = [
     (ecodes.ABS_HAT0X, AbsInfo(value=0, min=-1, max=1, fuzz=0, flat=0, resolution=0)),
@@ -31,19 +31,32 @@ _WIIMOTE_BRIDGE_ABS_CAPS = [
 
 # hid-wiimote reports A/B/Home as normal gamepad codes (passed straight through),
 # but "+"/"-" as media keys, which Mesen's fixed evdev enum doesn't understand.
-# Translate them into codes it does. 1/2 - the buttons naturally under the thumb
-# in the standard sideways ("horizontal", classic-NES-style) hold - act as B/A
-# respectively (the real A/B buttons still pass through too, as alternates).
-# The D-pad is handled separately (see _update_wiimote_dpad) since it becomes an
-# analog hat, not simple button passthrough.
-_WIIMOTE_TRANSLATE: dict[int, int] = {
-    ecodes.BTN_A: ecodes.BTN_A,
-    ecodes.BTN_B: ecodes.BTN_B,
-    ecodes.BTN_MODE: ecodes.BTN_MODE,
-    ecodes.BTN_1: ecodes.BTN_B,
-    ecodes.BTN_2: ecodes.BTN_A,
-    ecodes.KEY_PREVIOUS: ecodes.BTN_SELECT,  # "-"
-    ecodes.KEY_NEXT: ecodes.BTN_START,  # "+"
+# Translate them into codes it does. The D-pad is handled separately (see
+# _update_wiimote_dpad) since it becomes an analog hat, not simple button
+# passthrough.
+#
+# 1/2 are the only two buttons reachable in the standard sideways hold, but
+# they need to mean different things on a 2-button console (Nes/Gameboy) vs. a
+# 4-button one (Snes): 1=B/2=A for the former, 1=Y/2=B for the latter (see
+# mesen.py CONTROLLER_PROFILES["wii"]'s per_system tables and the "button
+# evolution" discussion that motivated it). Rather than have the bridge guess
+# which console is active, each press emits BOTH codes at once - each system's
+# profile only reads the pair meant for it, so the other pair is simply never
+# looked at and never causes an unwanted double-input.
+#
+# The real A/B buttons pass straight through for Nes/Gameboy (as before), and
+# additionally each emits one more, exclusive code so Snes games - which use
+# all four face buttons - can use them to fill in X/A (SNES has no use for a
+# fifth/sixth input, so no third code is needed here): real B -> East (SNES A),
+# real A -> North (SNES X).
+_WIIMOTE_TRANSLATE: dict[int, tuple[int, ...]] = {
+    ecodes.BTN_A: (ecodes.BTN_A, ecodes.BTN_Z),  # Nes/Gameboy: A, Snes: X (North)
+    ecodes.BTN_B: (ecodes.BTN_B, ecodes.BTN_TL),  # Nes/Gameboy: B, Snes: A (East)
+    ecodes.BTN_MODE: (ecodes.BTN_MODE,),
+    ecodes.BTN_1: (ecodes.BTN_B, ecodes.BTN_Y),  # Nes/Gameboy: B, Snes: Y
+    ecodes.BTN_2: (ecodes.BTN_A, ecodes.BTN_C),  # Nes/Gameboy: A, Snes: B
+    ecodes.KEY_PREVIOUS: (ecodes.BTN_SELECT,),  # "-"
+    ecodes.KEY_NEXT: (ecodes.BTN_START,),  # "+"
 }
 
 # D-pad keys that feed the synthetic hat, rotated 90 degrees for the standard
@@ -429,9 +442,10 @@ class EvdevMonitor:
                         if event.code in _WIIMOTE_DPAD_AXES:
                             self._update_wiimote_dpad(path, bridge, event.code, event.value)
                         else:
-                            target = _WIIMOTE_TRANSLATE.get(event.code)
-                            if target is not None:
-                                bridge.write(ecodes.EV_KEY, target, event.value)
+                            targets = _WIIMOTE_TRANSLATE.get(event.code)
+                            if targets is not None:
+                                for target in targets:
+                                    bridge.write(ecodes.EV_KEY, target, event.value)
                                 bridge.syn()
                     if event.type == ecodes.EV_KEY:
                         held = self._held_buttons.setdefault(path, set())
