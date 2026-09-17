@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import type { WSEvent, ControllerAction, BluetoothDevice } from '../types'
+import type { WSEvent, ControllerAction, BluetoothDevice, RawInputEvent } from '../types'
 import { playSound, playUISound } from '../lib/sounds'
 
 const WS_URL = 'ws://127.0.0.1:8000/ws'
@@ -7,7 +7,8 @@ const RECONNECT_DELAY = 2000
 
 export function useWebSocket(
   dispatch: React.Dispatch<ControllerAction>,
-  onStartPressed?: () => void
+  onStartPressed?: () => void,
+  onRawInput?: (event: RawInputEvent) => void
 ): {
   connected: boolean
   bluetoothDevices: BluetoothDevice[]
@@ -24,6 +25,8 @@ export function useWebSocket(
   const poppingTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const onStartPressedRef = useRef(onStartPressed)
   onStartPressedRef.current = onStartPressed
+  const onRawInputRef = useRef(onRawInput)
+  onRawInputRef.current = onRawInput
 
   const clearBluetoothDevices = useCallback(() => {
     setBluetoothDevices([])
@@ -102,6 +105,9 @@ export function useWebSocket(
             break
           case 'bluetooth_scan_complete':
             setBluetoothScanning(false)
+            break
+          case 'raw_input':
+            if (onRawInputRef.current) onRawInputRef.current(msg.data)
             break
         }
       } catch (err) {

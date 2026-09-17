@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import Button from './Button'
 
 const EMULATOR_OPTIONS = [
@@ -12,7 +13,7 @@ const EMULATOR_OPTIONS = [
 interface BottomButtonsProps {
   onBack: () => void
   onReassign: () => void
-  onOkay: () => void
+  onOkay: (force?: boolean) => void
   hasReady: boolean
   gameFolder: string | null
   emulatorFolder: string | null
@@ -34,6 +35,13 @@ export default function BottomButtons({
   manualGame,
   onManualGameSelect
 }: BottomButtonsProps): JSX.Element {
+  const [startContextMenu, setStartContextMenu] = useState<{ x: number; y: number } | null>(null)
+
+  const handleStartContextMenu = (e: React.MouseEvent): void => {
+    e.preventDefault()
+    setStartContextMenu({ x: e.clientX, y: e.clientY })
+  }
+
   return (
     <div className="flex items-center justify-center px-4 py-3 bg-gray-800 border-t border-gray-700">
       <div className="flex flex-1 w-full">
@@ -73,10 +81,38 @@ export default function BottomButtons({
         <Button onClick={onReassign} disabled={!hasReady}>
           Reset Grip/Order
         </Button>
-        <Button onClick={onOkay} disabled={!hasReady} variant="primary">
-          Start Software
-        </Button>
+        <div onContextMenu={handleStartContextMenu}>
+          <Button onClick={() => onOkay()} disabled={!hasReady} variant="primary">
+            Start Software
+          </Button>
+        </div>
       </div>
+
+      {startContextMenu && (
+        <div
+          className="fixed inset-0 z-50"
+          onClick={() => setStartContextMenu(null)}
+          onContextMenu={(e) => {
+            e.preventDefault()
+            setStartContextMenu(null)
+          }}
+        >
+          <div
+            className="absolute bg-gray-800 border border-gray-600 rounded shadow-lg py-1"
+            style={{ left: startContextMenu.x, top: startContextMenu.y }}
+          >
+            <button
+              onClick={() => {
+                onOkay(true)
+                setStartContextMenu(null)
+              }}
+              className="w-full px-4 py-1.5 text-sm text-left text-nowrap hover:bg-gray-700 text-yellow-400"
+            >
+              Force Start Software
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

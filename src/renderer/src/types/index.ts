@@ -11,8 +11,6 @@ export interface Controller {
   paired_but_disconnected?: boolean
   guid?: string
   port?: number
-  pad_length: number
-  tr2_is_start: boolean
 }
 
 export interface ReadyController extends Controller {
@@ -33,8 +31,6 @@ export interface ControllerProfile {
   guid_override?: string
   bluetooth_address?: string
   start_button?: number
-  pad_length: number
-  tr2_is_start: boolean
 }
 
 export interface EmulatorConfig {
@@ -49,6 +45,15 @@ export interface BluetoothDevice {
   address: string
 }
 
+export interface RawInputEvent {
+  unique_id: string
+  kind: 'key' | 'abs'
+  codes: string[]
+  value: number
+  min?: number
+  max?: number
+}
+
 export type WSEvent =
   | { type: 'controller_connected'; data: Controller }
   | { type: 'controller_disconnected'; data: { unique_id: string } }
@@ -61,6 +66,7 @@ export type WSEvent =
   | { type: 'bluetooth_device_found'; data: { name: string; address: string } }
   | { type: 'bluetooth_scan_complete'; data: Record<string, never> }
   | { type: 'state_snapshot'; data: { connected: Controller[]; ready: ReadyController[] } }
+  | { type: 'raw_input'; data: RawInputEvent }
 
 export type ControllerAction =
   | { type: 'SET_STATE'; connected: Controller[]; ready: ReadyController[] }
@@ -70,4 +76,4 @@ export type ControllerAction =
   | { type: 'CONTROLLER_UNREADY'; unique_id: string }
   | { type: 'BATTERY_UPDATE'; unique_id: string; battery_percent: number }
   | { type: 'REASSIGN' }
-  | { type: 'APPLY_CONFIG'; emulatorTarget?: string | null }
+  | { type: 'APPLY_CONFIG'; emulatorTarget?: string | null; gamePath?: string | null; force?: boolean }

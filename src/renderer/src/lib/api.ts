@@ -58,18 +58,26 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(data)
     }),
-  applyConfig: (emulator?: string | null) =>
+  applyConfig: (emulator?: string | null, force?: boolean) =>
     request('/emulators/apply', {
       method: 'POST',
-      body: JSON.stringify({ emulator: emulator ?? null }),
+      body: JSON.stringify({ emulator: emulator ?? null, force: force ?? false }),
     }),
 
-  updateProfileStartButton: (unique_id: string, tr2IsStart: boolean) =>
-    request(`/profiles/${encodeURIComponent(unique_id)}/start-button`, {
-      method: 'PUT',
-      body: JSON.stringify({ tr2_is_start: tr2IsStart })
+  forceConnectController: (unique_id: string) =>
+    request<{ status?: string; error?: string }>('/bluetooth/force-connect', {
+      method: 'POST',
+      body: JSON.stringify({ unique_id })
     }),
 
   getImages: () => request<string[]>('/assets/images'),
-  getSounds: () => request<string[]>('/assets/sounds')
+  getSounds: () => request<string[]>('/assets/sounds'),
+
+  setInputConfigFocus: (unique_id: string | null) =>
+    request('/input-config/focus', {
+      method: 'POST',
+      body: JSON.stringify({ unique_id })
+    }),
+
+  sessionLaunched: () => request('/session/launched', { method: 'POST' })
 }

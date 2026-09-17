@@ -11,7 +11,7 @@ declare global {
       }>
     }
     api: {
-      quitAndLaunch: () => void
+      signalLaunch: (gamePath?: string | null) => void
       getLaunchPaths: () => Promise<{
         gameFolder: string | null
         emulatorFolder: string | null

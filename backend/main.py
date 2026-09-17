@@ -18,6 +18,7 @@ from controllers.evdev_monitor import EvdevMonitor
 from controllers.state_manager import StateManager
 from emulators.dolphin import DolphinGCWriter, DolphinWiiWriter
 from emulators.mesen import MesenConfigWriter
+from emulators.eden import EdenConfigWriter
 from emulators.yuzu import YuzuConfigWriter
 from models import (
     ApplyConfigRequest,
@@ -33,11 +34,22 @@ from controllers.device_matcher import SDLInfo
 _MAC_RE = re.compile(r'^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$')
 _pending_bt_address: Optional[str] = None
 
+# Set once the game has launched and Controller Manager's window is hidden.
+# Config is already written by that point, so connect/ready/sound handling is
+# pointless noise from then on - but the Wii Remote bridge (EvdevMonitor's own
+# per-event translate-and-forward loop) runs independently of these callbacks
+# and keeps working regardless of this flag.
+_game_session_active = False
+
+# The keyboard is exposed as a virtual controller under this fixed identity.
+KEYBOARD_UNIQUE_ID = "keyboard"
+
 ws_manager = None
 state_manager = StateManager()
 evdev_monitor = EvdevMonitor()
 bluez_manager = BlueZManager()
 battery_monitor = BatteryMonitor()
+eden_writer = EdenConfigWriter()
 yuzu_writer = YuzuConfigWriter()
 dolphin_gc_writer = DolphinGCWriter()
 dolphin_wii_writer = DolphinWiiWriter()
@@ -71,55 +83,55 @@ ws_manager = ConnectionManager()
 # --- Helpers ---
 
 def _resolve_mesen_ports(ready_list: list[ReadyController]) -> list[ReadyController]:
-    """Predict Mesen Pad IDs by sorting all active joysticks LIFO and accounting for ghost pads."""
-    import subprocess
-    js_devices_info = []
+    """Predict Mesen Pad IDs by replicating Mesen's own device enumeration.
+
+    Mesen2 (Linux/LinuxKeyManager.cpp) walks /dev/input in raw readdir order
+    (no sorting) and counts every event device it can open that has BTN_GAMEPAD
+    or an ABS_X axis — including ghost devices like the IMU/motion nodes that
+    Switch-style controllers expose. Since Mesen runs as the same user, devices
+    we can't open are skipped by Mesen too.
+    """
+    from evdev import InputDevice, ecodes
+
+    pad_index_by_path = {}
+    pad = 0
     input_dir = "/dev/input"
     if os.path.exists(input_dir):
-        for entry in os.listdir(input_dir):
-            if entry.startswith("event"):
-                node_path = os.path.join(input_dir, entry)
-                try:
-                    out = subprocess.check_output(["udevadm", "info", "--query=property", "--name=" + node_path], text=True)
-                    if "ID_INPUT_JOYSTICK=1" in out or "ID_INPUT_GAMEPAD=1" in out:
-                        event_num = int(entry.replace("event", ""))
-                        name = ""
-                        for line in out.splitlines():
-                            if line.startswith("ID_MODEL="):
-                                name = line.split("=")[1].lower()
-                                break
-                        js_devices_info.append({"num": event_num, "path": node_path, "name": name})
-                except Exception:
-                    pass
-    
-    # Sort LIFO: Newest (Highest event number) is Pad 1
-    js_devices_info.sort(key=lambda x: x["num"], reverse=True)
-    
-    # Map each device to its Mesen Pad Index
-    js_index_map = {}
-    current_pad = 0
-    for dev_info in js_devices_info:
-        # Find if this physical path matches a connected/ready controller to get its pad_length
-        uid = state_manager.get_unique_id_for_path(dev_info["path"])
-        pad_len = 1
-        if uid:
-            c = state_manager._connected.get(dev_info["path"]) or state_manager._ready.get(dev_info["path"])
-            if c:
-                pad_len = c.pad_length
-        
-        if pad_len > 1:
-            # Actual gamepad is the LAST pad in the block (offset by pad_len - 1)
-            js_index_map[dev_info["path"]] = current_pad + (pad_len - 1)
-            current_pad += pad_len
-        else:
-            js_index_map[dev_info["path"]] = current_pad
-            current_pad += 1
+        for entry in os.listdir(input_dir):  # keep readdir order — Mesen does not sort
+            if not entry.startswith("event"):
+                continue
+            try:
+                int(entry[5:])
+            except ValueError:
+                continue
+            node_path = os.path.join(input_dir, entry)
+            try:
+                dev = InputDevice(node_path)
+            except Exception:
+                continue
+            try:
+                caps = dev.capabilities()
+                has_gamepad_btn = ecodes.BTN_GAMEPAD in caps.get(ecodes.EV_KEY, [])
+                abs_codes = [c[0] if isinstance(c, tuple) else c for c in caps.get(ecodes.EV_ABS, [])]
+                has_abs_x = ecodes.ABS_X in abs_codes
+            except Exception:
+                continue
+            finally:
+                dev.close()
+            if has_gamepad_btn or has_abs_x:
+                pad_index_by_path[node_path] = pad
+                pad += 1
 
-    # Attach the predicted Pad index (0-based) to each controller
+    # Attach the predicted Pad index (0-based) to each controller. Use the
+    # controller's own device path: twin pads with no serial share a unique_id,
+    # so a unique_id lookup can return the sibling's path.
     for r in ready_list:
-        device_path = state_manager.get_path_for_unique_id(r.unique_id)
-        r.port = js_index_map.get(device_path, 0) if device_path else 0
-        
+        if r.unique_id == KEYBOARD_UNIQUE_ID:
+            r.port = None  # keyboard isn't a gamepad; Mesen uses absolute key IDs
+            continue
+        device_path = r.device_path or state_manager.get_path_for_unique_id(r.unique_id)
+        r.port = pad_index_by_path.get(device_path, 0) if device_path else 0
+
     return ready_list
 
 # Hardcoded SDL2 device names for Dolphin.
@@ -170,6 +182,8 @@ def _build_dolphin_controllers(filtered: list, sdl_name_counts: dict[str, int]) 
 async def on_controller_connected(device_info: dict):
     """Called by evdev_monitor when a new device is detected."""
     global _pending_bt_address
+    if _game_session_active:
+        return
     if device_info.get("connection_type") == "bluetooth":
         uid = device_info.get("unique_id", "")
         if _MAC_RE.match(uid):
@@ -179,8 +193,13 @@ async def on_controller_connected(device_info: dict):
             _pending_bt_address = None
     controller = await state_manager.add_connected(device_info)
     if controller:
-        # Register with battery monitor
-        battery_monitor.register_device(device_info["device_path"])
+        # Apply the saved profile's start-button choice (the monitor's connect-time
+        # default only knows type defaults, not per-controller settings)
+        evdev_monitor.update_start_button_for_path(device_info["device_path"], controller.tr2_is_start, controller.start_button_override)
+        # Register with battery monitor. For a bridged Wii Remote, device_path here
+        # is the synthetic bridge device (no real sysfs battery info) - use the
+        # real device path instead so battery reporting still works.
+        battery_monitor.register_device(evdev_monitor.to_real_path(device_info["device_path"]))
         await ws_manager.broadcast("controller_connected", controller.model_dump())
         
         # Re-resolve Pad IDs for all ready controllers and broadcast updates
@@ -191,8 +210,12 @@ async def on_controller_connected(device_info: dict):
 
 async def on_controller_disconnected(device_path: str):
     """Called by evdev_monitor when a device is removed."""
-    # Unregister from battery monitor
-    battery_monitor.unregister_device(device_path)
+    if _game_session_active:
+        return
+    # Unregister from battery monitor. For a bridged Wii Remote, device_path here
+    # is the synthetic bridge device - it was registered under the real path (see
+    # on_controller_connected), so translate back to unregister the right one.
+    battery_monitor.unregister_device(evdev_monitor.to_real_path(device_path))
 
     unique_id = state_manager.get_unique_id_for_path(device_path)
     if unique_id:
@@ -209,6 +232,8 @@ async def on_controller_disconnected(device_path: str):
 
 async def on_button_press(device_path: str, button_code: int):
     """Called by evdev_monitor on START/TR2 press."""
+    if _game_session_active:
+        return
     controller = await state_manager.move_to_ready(device_path)
     if controller:
         # Resolve ports before broadcasting
@@ -220,12 +245,16 @@ async def on_button_press(device_path: str, button_code: int):
 
 async def on_input(device_path: str):
     """Called by evdev_monitor on any significant input."""
+    if _game_session_active:
+        return
     unique_id = state_manager.get_unique_id_for_path(device_path)
     if unique_id:
         await ws_manager.broadcast("controller_input", {"unique_id": unique_id})
 
 async def on_start_pressed(device_path: str):
     """Called by evdev_monitor when the Start button is pressed."""
+    if _game_session_active:
+        return
     await ws_manager.broadcast("start_pressed", {})
 
 async def on_battery_update(device_path: str, percent: int):
@@ -234,6 +263,18 @@ async def on_battery_update(device_path: str, percent: int):
     if unique_id:
         state_manager.update_battery(unique_id, percent)
         await ws_manager.broadcast("battery_update", {"unique_id": unique_id, "battery_percent": percent})
+
+async def on_raw_input(device_path: str, kind: str, codes: list[str], value: int, min_val: Optional[int], max_val: Optional[int]):
+    """Called by evdev_monitor for every key/axis event on the focused Input Config device."""
+    unique_id = state_manager.get_unique_id_for_path(device_path)
+    if not unique_id:
+        return
+    payload: dict[str, Any] = {"unique_id": unique_id, "kind": kind, "codes": codes, "value": value}
+    if min_val is not None:
+        payload["min"] = min_val
+    if max_val is not None:
+        payload["max"] = max_val
+    await ws_manager.broadcast("raw_input", payload)
 
 # --- App lifespan ---
 
@@ -247,7 +288,19 @@ async def lifespan(app: FastAPI):
     evdev_monitor.on_button_press = on_button_press
     evdev_monitor.on_input = on_input
     evdev_monitor.on_start_pressed = on_start_pressed
+    evdev_monitor.on_raw_input = on_raw_input
     battery_monitor.on_update = on_battery_update
+
+    # Register the keyboard as an always-connected virtual controller.
+    # The frontend readies it when both Shift keys are pressed together.
+    await state_manager.add_connected({
+        "device_path": KEYBOARD_UNIQUE_ID,
+        "unique_id": KEYBOARD_UNIQUE_ID,
+        "name": "Keyboard",
+        "connection_type": "usb",
+        "guid": None,
+        "port": None,
+    })
 
     asyncio.create_task(evdev_monitor.run())
     asyncio.create_task(battery_monitor.run())
@@ -321,6 +374,24 @@ async def move_to_ready(req: MoveToReadyRequest):
         return this_controller
     return {"error": "Controller already ready or not connected"}
 
+@app.post("/api/session/launched")
+async def session_launched():
+    """Called once the game has actually launched: silence connect/ready/sound
+    handling for the rest of this run (the Wii Remote bridge keeps working)."""
+    global _game_session_active
+    _game_session_active = True
+    return {"status": "ok"}
+
+class InputConfigFocusRequest(BaseModel):
+    unique_id: Optional[str] = None
+
+@app.post("/api/input-config/focus")
+async def set_input_config_focus(req: InputConfigFocusRequest):
+    """Stream every raw button/axis event for one controller (Input Config screen)."""
+    path = state_manager.get_path_for_unique_id(req.unique_id) if req.unique_id else None
+    evdev_monitor.set_focus(path)
+    return {"status": "ok", "focused": req.unique_id}
+
 @app.delete("/api/controllers/ready")
 async def clear_ready():
     controllers = await state_manager.clear_ready()
@@ -343,25 +414,17 @@ async def update_profile(unique_id: str, update: ControllerProfileUpdate):
         img_src=update.img_src,
         snd_src=update.snd_src,
         guid_override=update.guid_override if update.guid_override is not None else ...,
-        pad_length=update.pad_length,
-        tr2_is_start=update.tr2_is_start,
     )
     if profile:
         # Update in-memory state
         state_manager.refresh_profile(unique_id, profile)
-        
-        # Update start button in evdev_monitor
-        device_path = state_manager.get_path_for_unique_id(unique_id)
-        if device_path:
-            evdev_monitor.update_start_button_for_path(device_path, profile.tr2_is_start)
-        
-        # New: Re-resolve Pad IDs for all ready controllers if pad_length changed
-        # and broadcast updates so GUI labels refresh immediately
+
+        # Broadcast updates so GUI labels refresh immediately
         ready = state_manager.get_ready_list()
         updated_ready = _resolve_mesen_ports(ready)
         for r in updated_ready:
             await ws_manager.broadcast("controller_ready", r.model_dump())
-            
+
         return profile
     return {"error": "Profile not found"}
 
@@ -389,17 +452,6 @@ async def delete_profile(unique_id: str):
     success = await database.delete_profile(unique_id)
     if success:
         return {"status": "deleted"}
-    return {"error": "Profile not found"}
-
-class StartButtonUpdate(BaseModel):
-    tr2_is_start: bool
-
-@app.put("/api/profiles/{unique_id}/start-button")
-async def update_profile_start_button(unique_id: str, update: StartButtonUpdate):
-    profile = await database.update_profile_fields(unique_id, tr2_is_start=update.tr2_is_start)
-    if profile:
-        state_manager.refresh_profile(unique_id, profile)
-        return {"status": "updated", "tr2_is_start": profile.tr2_is_start}
     return {"error": "Profile not found"}
 
 # --- Bluetooth endpoints ---
@@ -433,6 +485,26 @@ async def pair_bluetooth_device(req: PairRequest):
         return {"status": "paired", "address": req.address}
     _pending_bt_address = None
     return {"error": "Pairing failed", "address": req.address}
+
+class ForceConnectRequest(BaseModel):
+    unique_id: str
+
+@app.post("/api/bluetooth/force-connect")
+async def force_connect_controller(req: ForceConnectRequest):
+    """Connect to a profiled controller by its stored MAC, even if it isn't discoverable."""
+    global _pending_bt_address
+    profile = await database.get_profile(req.unique_id)
+    if not profile:
+        return {"error": "Profile not found"}
+    address = profile.bluetooth_address or (req.unique_id if _MAC_RE.match(req.unique_id) else None)
+    if not address:
+        return {"error": "No Bluetooth address stored for this controller"}
+    _pending_bt_address = address
+    success = await bluez_manager.connect_device(address)
+    if success:
+        return {"status": "connected", "address": address}
+    _pending_bt_address = None
+    return {"error": "Connect failed", "address": address}
 
 @app.post("/api/bluetooth/disconnect")
 async def disconnect_bluetooth_device(req: PairRequest):
@@ -477,7 +549,7 @@ async def update_emulator(name: str, update: EmulatorConfigUpdate):
 async def apply_config(req: ApplyConfigRequest = ApplyConfigRequest()):
     """Write controller config to enabled emulators. If req.emulator is set, only that one."""
     ready = state_manager.get_ready_list()
-    if not ready:
+    if not ready and not req.force:
         return {"error": "No controllers ready"}
 
     # Resolve ports before applying
@@ -497,7 +569,7 @@ async def apply_config(req: ApplyConfigRequest = ApplyConfigRequest()):
             elif emu.emulator_name != req.emulator:
                 continue
 
-        if emu.emulator_name == "yuzu":
+        if emu.emulator_name in ("yuzu", "eden"):
             guid_counts: dict[str, int] = {}
             controllers_with_info = []
             for r in ready:
@@ -514,20 +586,22 @@ async def apply_config(req: ApplyConfigRequest = ApplyConfigRequest()):
                     controllers_with_info.append((r.unique_id, sdl_info))
                 else:
                     controllers_with_info.append((r.unique_id, None))
-            success = yuzu_writer.write_config(emu.config_path, controllers_with_info)
-            results["yuzu"] = "ok" if success else "error"
+            writer = eden_writer if emu.emulator_name == "eden" else yuzu_writer
+            success = writer.write_config(emu.config_path, controllers_with_info)
+            results[emu.emulator_name] = "ok" if success else "error"
 
         elif emu.emulator_name in ("dolphin_gc", "dolphin_wii"):
             if "_dolphin_sdl_counts" not in results:
                 results["_dolphin_sdl_counts"] = {}
             sdl_counts = results["_dolphin_sdl_counts"]
             
-            filtered = ready
+            # Keyboard isn't an SDL device — Dolphin can't use it
+            filtered = [r for r in ready if r.unique_id != KEYBOARD_UNIQUE_ID]
             if req.emulator == "dolphin":
                 if emu.emulator_name == "dolphin_gc":
-                    filtered = [r for r in ready if not _is_wiimote(r)]
+                    filtered = [r for r in filtered if not _is_wiimote(r)]
                 else:
-                    filtered = [r for r in ready if _is_wiimote(r)]
+                    filtered = [r for r in filtered if _is_wiimote(r)]
 
             controllers_with_info = _build_dolphin_controllers(filtered, sdl_counts)
             writer = dolphin_gc_writer if emu.emulator_name == "dolphin_gc" else dolphin_wii_writer
@@ -537,17 +611,17 @@ async def apply_config(req: ApplyConfigRequest = ApplyConfigRequest()):
         elif emu.emulator_name == "mesen":
             controllers_with_info = []
             for r in ready:
+                # Include the custom name so name-based profile matching works for
+                # controllers that are otherwise indistinguishable (e.g. a Diswoe
+                # reports the same VID/PID and device name as a real Switch Pro).
                 sdl_info = SDLInfo(
                     guid=r.guid or "",
                     port=r.port if r.port is not None else 0,
                     vendor_id=r.vendor_id or 0,
                     product_id=r.product_id or 0,
-                    device_name=r.name,
+                    device_name=" ".join(filter(None, [r.custom_name, r.name])),
                 )
-                # We can reuse the device_name field or similar to pass extra flags, 
-                # but better to update SDLInfo or just use another way.
-                # Let's add tr2_is_start to SDLInfo in device_matcher.py
-                controllers_with_info.append((r.unique_id, sdl_info, r.tr2_is_start))
+                controllers_with_info.append((r.unique_id, sdl_info))
             success = mesen_writer.write_config(emu.config_path, controllers_with_info)
             results["mesen"] = "ok" if success else "error"
 

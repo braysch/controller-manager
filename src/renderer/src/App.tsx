@@ -1,19 +1,30 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import TopBar from './components/TopBar'
 import ConnectedArea from './components/ConnectedArea'
 import ReadyGrid from './components/ReadyGrid'
 import BottomButtons from './components/BottomButtons'
 import SettingsPanel from './components/SettingsPanel'
+import InputConfigScreen from './components/InputConfigScreen'
 import { useWebSocket } from './hooks/useWebSocket'
 import { useControllers } from './hooks/useControllers'
+import { api } from './lib/api'
+import type { RawInputEvent } from './types'
 
 function App(): JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [inputConfigOpen, setInputConfigOpen] = useState(false)
   const [gameFolder, setGameFolder] = useState<string | null>(null)
   const [emulatorFolder, setEmulatorFolder] = useState<string | null>(null)
   const [emulatorTarget, setEmulatorTarget] = useState<string | null>(null)
   const [manualEmulator, setManualEmulator] = useState<string>('yuzu')
   const [manualGame, setManualGame] = useState<string | null>(null)
+
+  // Raw input events are only consumed by InputConfigScreen while it's open;
+  // routing them through a ref avoids re-rendering the whole app on every press.
+  const rawInputHandlerRef = useRef<((event: RawInputEvent) => void) | null>(null)
+  const handleRawInput = useCallback((event: RawInputEvent) => {
+    rawInputHandlerRef.current?.(event)
+  }, [])
 
   useEffect(() => {
     window.api.getLaunchPaths().then(({ gameFolder, emulatorFolder, emulatorTarget }) => {
@@ -22,6 +33,29 @@ function App(): JSX.Element {
       setEmulatorTarget(emulatorTarget)
     })
   }, [])
+
+  // Both Shift keys held together ready the virtual keyboard controller.
+  // Disabled while Input Config is open so testing the keyboard's buttons
+  // there doesn't ready it, same as any other controller being tested.
+  useEffect(() => {
+    if (inputConfigOpen) return
+    const heldShifts = new Set<string>()
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== 'ShiftLeft' && e.code !== 'ShiftRight') return
+      if (heldShifts.has(e.code)) return // ignore key auto-repeat
+      heldShifts.add(e.code)
+      if (heldShifts.size === 2) {
+        api.moveToReady('keyboard').catch(console.error)
+      }
+    }
+    const onKeyUp = (e: KeyboardEvent) => heldShifts.delete(e.code)
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+    }
+  }, [inputConfigOpen])
 
   const selectManualGame = async () => {
     const result = await window.api.selectGame()
@@ -39,9 +73,13 @@ function App(): JSX.Element {
     bluetoothScanning,
     clearBluetoothDevices,
     poppingControllers
-  } = useWebSocket(dispatch, () => {
-    if (ready.length > 0) dispatch({ type: 'APPLY_CONFIG', emulatorTarget: activeEmulatorTarget, gamePath: manualGame })
-  })
+  } = useWebSocket(
+    dispatch,
+    () => {
+      if (ready.length > 0) dispatch({ type: 'APPLY_CONFIG', emulatorTarget: activeEmulatorTarget, gamePath: manualGame })
+    },
+    handleRawInput
+  )
 
   return (
     <div className="flex flex-col h-screen">
@@ -65,7 +103,14 @@ function App(): JSX.Element {
 
       <BottomButtons
         onReassign={() => dispatch({ type: 'REASSIGN' })}
-        onOkay={() => dispatch({ type: 'APPLY_CONFIG', emulatorTarget: activeEmulatorTarget, gamePath: manualGame })}
+        onOkay={(force) =>
+          dispatch({
+            type: 'APPLY_CONFIG',
+            emulatorTarget: activeEmulatorTarget,
+            gamePath: manualGame,
+            force
+          })
+        }
         onBack={() => window.close()}
         hasReady={ready.length > 0}
         gameFolder={gameFolder}
@@ -76,7 +121,22 @@ function App(): JSX.Element {
         onManualGameSelect={selectManualGame}
       />
 
-      <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsPanel
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        onOpenInputConfig={() => {
+          setSettingsOpen(false)
+          setInputConfigOpen(true)
+        }}
+      />
+
+      <InputConfigScreen
+        open={inputConfigOpen}
+        onClose={() => setInputConfigOpen(false)}
+        connected={connected}
+        ready={ready}
+        rawInputHandlerRef={rawInputHandlerRef}
+      />
     </div>
   )
 }

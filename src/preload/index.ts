@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 
 const api = {
-  quitAndLaunch: (gamePath?: string | null) => ipcRenderer.send('quit-and-launch', gamePath),
+  signalLaunch: (gamePath?: string | null) => ipcRenderer.send('signal-launch', gamePath),
   selectGame: () => ipcRenderer.invoke('select-game') as Promise<{ gamePath: string, gameFolder: string } | null>,
   getLaunchPaths: () =>
     ipcRenderer.invoke('get-launch-paths') as Promise<{

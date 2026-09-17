@@ -15,8 +15,8 @@ export default function ControllerProfileEditor({ open }: ControllerProfileEdito
   const [editImg, setEditImg] = useState('')
   const [editSnd, setEditSnd] = useState('')
   const [editGuid, setEditGuid] = useState('')
-  const [editTr2IsStart, setEditTr2IsStart] = useState(false)
-  const [editPadLength, setEditPadLength] = useState(1)
+  const [connecting, setConnecting] = useState<string | null>(null)
+  const [connectResult, setConnectResult] = useState<Record<string, 'ok' | 'fail'>>({})
 
   const MAC_RE = /^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$/i
   const resolveMac = (profile: ControllerProfile) =>
@@ -36,8 +36,6 @@ export default function ControllerProfileEditor({ open }: ControllerProfileEdito
     setEditImg(profile.img_src)
     setEditSnd(profile.snd_src)
     setEditGuid(profile.guid_override || '')
-    setEditTr2IsStart(profile.tr2_is_start)
-    setEditPadLength(profile.pad_length)
   }
 
   const saveEdit = async () => {
@@ -46,9 +44,7 @@ export default function ControllerProfileEditor({ open }: ControllerProfileEdito
       custom_name: editName || null,
       img_src: editImg,
       snd_src: editSnd,
-      guid_override: editGuid || null,
-      pad_length: editPadLength,
-      tr2_is_start: editTr2IsStart
+      guid_override: editGuid || null
     })
     setProfiles(
       profiles.map((p) =>
@@ -58,14 +54,33 @@ export default function ControllerProfileEditor({ open }: ControllerProfileEdito
               custom_name: editName || undefined,
               img_src: editImg,
               snd_src: editSnd,
-              guid_override: editGuid || undefined,
-              tr2_is_start: editTr2IsStart,
-              pad_length: editPadLength
+              guid_override: editGuid || undefined
             }
           : p
       )
     )
     setEditing(null)
+  }
+
+  const forceConnect = async (profile: ControllerProfile, e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (connecting) return
+    setConnecting(profile.unique_id)
+    setConnectResult((prev) => {
+      const next = { ...prev }
+      delete next[profile.unique_id]
+      return next
+    })
+    try {
+      const res = await api.forceConnectController(profile.unique_id)
+      setConnectResult((prev) => ({
+        ...prev,
+        [profile.unique_id]: res.status === 'connected' ? 'ok' : 'fail'
+      }))
+    } catch {
+      setConnectResult((prev) => ({ ...prev, [profile.unique_id]: 'fail' }))
+    }
+    setConnecting(null)
   }
 
   const deleteProfile = async (uniqueId: string) => {
@@ -137,24 +152,6 @@ export default function ControllerProfileEditor({ open }: ControllerProfileEdito
                       className="w-full bg-gray-800 rounded px-2 py-1 text-xs font-mono text-gray-400 cursor-default placeholder-gray-600"
                     />
                   </div>
-                  <label className="flex items-center gap-2 cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={editPadLength === 2}
-                      onChange={(e) => setEditPadLength(e.target.checked ? 2 : 1)}
-                      className="rounded"
-                    />
-                    <span className="text-xs text-gray-400">Double Pad (Switch-Lite/Diswoe)</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={editTr2IsStart}
-                      onChange={(e) => setEditTr2IsStart(e.target.checked)}
-                      className="rounded"
-                    />
-                    <span className="text-xs text-gray-400">Use ZR/TR2 as Start button</span>
-                  </label>
                   <div className="flex gap-2">
                     <button
                       onClick={saveEdit}
@@ -197,14 +194,26 @@ export default function ControllerProfileEditor({ open }: ControllerProfileEdito
                     {profile.guid_override && (
                       <div className="text-xs text-yellow-500 font-mono">GUID: {profile.guid_override}</div>
                     )}
-                    <div className="flex gap-3 mt-1">
-                      {profile.pad_length === 2 && (
-                        <div className="text-[10px] text-purple-400 uppercase font-bold tracking-tighter">Double Pad</div>
-                      )}
-                      {profile.tr2_is_start && (
-                        <div className="text-[10px] text-blue-400 uppercase font-bold tracking-tighter">Start: ZR/TR2</div>
-                      )}
-                    </div>
+                  </div>
+                  <div className="ml-auto flex items-center gap-2">
+                    {connectResult[profile.unique_id] === 'ok' && (
+                      <span className="text-[10px] text-green-400 uppercase font-bold tracking-tighter">Connected</span>
+                    )}
+                    {connectResult[profile.unique_id] === 'fail' && (
+                      <span className="text-[10px] text-red-400 uppercase font-bold tracking-tighter">Failed</span>
+                    )}
+                    <button
+                      onClick={(e) => forceConnect(profile, e)}
+                      disabled={!resolveMac(profile) || connecting !== null}
+                      title={
+                        resolveMac(profile)
+                          ? 'Attempt a Bluetooth connection even if the controller is not discoverable'
+                          : 'No Bluetooth address stored for this controller'
+                      }
+                      className="px-2 py-1 text-xs bg-indigo-600 rounded hover:bg-indigo-500 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed"
+                    >
+                      {connecting === profile.unique_id ? 'Connecting…' : 'Force Connect'}
+                    </button>
                   </div>
                 </div>
               )}

@@ -46,8 +46,9 @@ class StateManager:
             product_id=device_info.get("product_id"),
             guid=effective_guid,
             port=device_info.get("port"),
-            pad_length=profile.pad_length,
+            device_path=device_path,
             tr2_is_start=profile.tr2_is_start,
+            start_button_override=profile.start_button_override,
         )
 
         self._connected[device_path] = controller
@@ -125,8 +126,9 @@ class StateManager:
             slot_index=slot_index, guid=connected.guid, port=connected.port,
             vendor_id=connected.vendor_id, product_id=connected.product_id,
             component_unique_ids=component_unique_ids, component_names=component_names,
-            component_imgs=component_imgs, pad_length=connected.pad_length,
+            component_imgs=component_imgs, device_path=device_path,
             tr2_is_start=connected.tr2_is_start,
+            start_button_override=connected.start_button_override,
         )
         self._ready[device_path] = ready
         return ready
@@ -139,7 +141,8 @@ class StateManager:
                 img_src=ready.img_src, snd_src=ready.snd_src, connection_type=ready.connection_type,
                 battery_percent=ready.battery_percent, vendor_id=ready.vendor_id,
                 product_id=ready.product_id, guid=ready.guid, port=ready.port,
-                pad_length=ready.pad_length, tr2_is_start=ready.tr2_is_start,
+                device_path=ready.device_path, tr2_is_start=ready.tr2_is_start,
+                start_button_override=ready.start_button_override,
             )
             self._connected[device_path] = connected
             moved.append(connected)
@@ -171,7 +174,8 @@ class StateManager:
                 c = coll[device_path]
                 c.custom_name = profile.custom_name
                 c.img_src = profile.img_src; c.snd_src = profile.snd_src
-                c.pad_length = profile.pad_length; c.tr2_is_start = profile.tr2_is_start
+                c.tr2_is_start = profile.tr2_is_start
+                c.start_button_override = profile.start_button_override
 
     async def reset_profile(self, unique_id: str):
         device_path = self._uid_to_path.get(unique_id)

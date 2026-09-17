@@ -300,6 +300,65 @@ class BlueZManager:
             except Exception:
                 pass
 
+    async def connect_device(self, address: str) -> bool:
+        """Force-connect to a device by MAC address.
+
+        Works even when the device isn't showing up in a scan: paired devices
+        can be connected directly, and unknown ones get a short discovery
+        window so BlueZ can find them first.
+        """
+        bus = self._get_bus()
+        device_path = self._find_device_path(address)
+
+        if not device_path:
+            # BlueZ doesn't know this device — run a short discovery to find it
+            adapter_path = self._get_adapter_path()
+            if not adapter_path:
+                print("[BlueZ] No Bluetooth adapter found")
+                return False
+            adapter = bus.get_proxy("org.bluez", adapter_path, "org.bluez.Adapter1")
+            try:
+                adapter.StartDiscovery()
+            except Exception:
+                pass
+            print(f"[BlueZ] {address} unknown, discovering before force connect...")
+            try:
+                loop = asyncio.get_running_loop()
+                deadline = loop.time() + 10.0
+                while loop.time() < deadline and not device_path:
+                    await asyncio.sleep(1.0)
+                    device_path = self._find_device_path(address)
+            finally:
+                try:
+                    adapter.StopDiscovery()
+                except Exception:
+                    pass
+            if not device_path:
+                print(f"[BlueZ] {address} not found for force connect")
+                return False
+
+        try:
+            # Trust so the controller can reconnect on its own later
+            try:
+                dbus_props = bus.get_proxy("org.bluez", device_path, "org.freedesktop.DBus.Properties")
+                dbus_props.Set("org.bluez.Device1", "Trusted", get_variant(Bool, True))
+            except Exception:
+                pass
+
+            device = bus.get_proxy("org.bluez", device_path, "org.bluez.Device1")
+            try:
+                device.Connect()
+            except Exception as e:
+                # Not paired yet? Pair (which also connects), otherwise give up.
+                print(f"[BlueZ] Direct connect to {address} failed ({e}), trying pair...")
+                return await self.pair_device(address, _allow_force_retry=False)
+
+            print(f"[BlueZ] Force connected: {address}")
+            return True
+        except Exception as e:
+            print(f"[BlueZ] Force connect failed for {address}: {e}")
+            return False
+
     async def disconnect_device(self, address: str) -> bool:
         """Disconnect a single Bluetooth device by MAC address."""
         try:

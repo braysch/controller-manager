@@ -1,13 +1,14 @@
-import { X } from 'lucide-react'
+import { X, Gamepad2 } from 'lucide-react'
 import ControllerProfileEditor from './ControllerProfileEditor'
 import EmulatorPathConfig from './EmulatorPathConfig'
 
 interface SettingsPanelProps {
   open: boolean
   onClose: () => void
+  onOpenInputConfig: () => void
 }
 
-export default function SettingsPanel({ open, onClose }: SettingsPanelProps): JSX.Element {
+export default function SettingsPanel({ open, onClose, onOpenInputConfig }: SettingsPanelProps): JSX.Element {
   return (
     <>
       {/* Backdrop */}
@@ -33,6 +34,13 @@ export default function SettingsPanel({ open, onClose }: SettingsPanelProps): JS
 
         <div className="overflow-y-auto h-[calc(100%-4rem)] p-4 space-y-6">
           <EmulatorPathConfig />
+          <button
+            onClick={onOpenInputConfig}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-semibold bg-indigo-600 rounded-lg hover:bg-indigo-500 transition-colors"
+          >
+            <Gamepad2 size={16} />
+            Input Config
+          </button>
           <ControllerProfileEditor open={open} />
         </div>
       </div>

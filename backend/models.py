@@ -13,8 +13,8 @@ class ControllerProfile(BaseModel):
     guid_override: Optional[str] = None
     bluetooth_address: Optional[str] = None
     start_button: Optional[int] = None
-    pad_length: int = 1
     tr2_is_start: bool = False
+    start_button_override: Optional[int] = None
 
 
 class ControllerProfileUpdate(BaseModel):
@@ -22,8 +22,6 @@ class ControllerProfileUpdate(BaseModel):
     img_src: Optional[str] = None
     snd_src: Optional[str] = None
     guid_override: Optional[str] = None
-    pad_length: Optional[int] = None
-    tr2_is_start: Optional[bool] = None
 
 
 class ConnectedController(BaseModel):
@@ -39,8 +37,11 @@ class ConnectedController(BaseModel):
     paired_but_disconnected: bool = False
     guid: Optional[str] = None
     port: Optional[int] = None
-    pad_length: int = 1
+    # Identical pads (e.g. twin dongle receivers with no serial) share a
+    # unique_id, so the evdev path is the only reliable per-device handle.
+    device_path: Optional[str] = None
     tr2_is_start: bool = False
+    start_button_override: Optional[int] = None
 
 
 class ReadyController(BaseModel):
@@ -59,8 +60,9 @@ class ReadyController(BaseModel):
     component_unique_ids: Optional[list[str]] = None
     component_names: Optional[list[str]] = None
     component_imgs: Optional[list[str]] = None
-    pad_length: int = 1
+    device_path: Optional[str] = None
     tr2_is_start: bool = False
+    start_button_override: Optional[int] = None
 
 
 class MoveToReadyRequest(BaseModel):
@@ -81,6 +83,7 @@ class EmulatorConfigUpdate(BaseModel):
 
 class ApplyConfigRequest(BaseModel):
     emulator: Optional[str] = None
+    force: bool = False
 
 
 class ControllerTypeDefault(BaseModel):

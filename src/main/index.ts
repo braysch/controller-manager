@@ -23,9 +23,10 @@ function getLaunchPaths(): {
 }
 
 let pythonManager: PythonManager
+let mainWindow: BrowserWindow | null = null
 
 function createWindow(): void {
-  const mainWindow = new BrowserWindow({
+  const window = new BrowserWindow({
     width: 960,
     height: 720,
     show: false,
@@ -36,20 +37,21 @@ function createWindow(): void {
       sandbox: false
     }
   })
+  mainWindow = window
 
-  mainWindow.on('ready-to-show', () => {
-    mainWindow.show()
+  window.on('ready-to-show', () => {
+    window.show()
   })
 
-  mainWindow.webContents.setWindowOpenHandler((details) => {
+  window.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)
     return { action: 'deny' }
   })
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
+    window.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+    window.loadFile(join(__dirname, '../renderer/index.html'))
   }
 }
 
@@ -71,9 +73,13 @@ app.whenReady().then(() => {
 
   ipcMain.handle('get-launch-paths', () => getLaunchPaths())
 
-  ipcMain.on('quit-and-launch', (_, gamePath?: string | null) => {
+  // Signal the emulate.sh wrapper that configuration is done and it should launch
+  // the emulator now. Controller Manager itself keeps running in the background
+  // (e.g. for the Wii Remote bridge) - the wrapper script kills it (SIGTERM, see
+  // the process.on('SIGTERM', ...) handler below) once the game session ends.
+  ipcMain.on('signal-launch', (_, gamePath?: string | null) => {
     fs.writeFileSync('/tmp/controller-manager-launch', gamePath ?? '')
-    app.quit()
+    mainWindow?.hide()
   })
 
   ipcMain.handle('select-game', async () => {
@@ -120,4 +126,11 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit()
   }
+})
+
+// The emulate.sh wrapper sends this once the game session ends (the emulator
+// process it was running has exited), to stop Controller Manager alongside it.
+process.on('SIGTERM', () => {
+  pythonManager?.stop()
+  app.exit(0)
 })
