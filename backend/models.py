@@ -86,6 +86,34 @@ class EmulatorConfigUpdate(BaseModel):
 class ApplyConfigRequest(BaseModel):
     emulator: Optional[str] = None
     force: bool = False
+    # Which game is about to launch and which console system it belongs to
+    # (e.g. "Snes") - only used to look up a per-game custom mapping (see
+    # CustomMapping) for the Mesen branch; every other system's section in
+    # settings.json still gets its normal default profile regardless.
+    game_name: Optional[str] = None
+    system: Optional[str] = None
+
+
+class CustomMapping(BaseModel):
+    game_name: str
+    controller_signature: str
+    system: str
+    # Role name (e.g. "A", "Select") -> raw physical binding captured from
+    # Input Config's raw-input stream: {"label": str, "code": str, "kind": "key"}.
+    bindings: dict[str, dict]
+
+
+class CustomMappingUpsert(BaseModel):
+    game_name: str
+    controller_signature: str
+    system: str
+    bindings: dict[str, dict]
+
+
+class CustomMappingDelete(BaseModel):
+    game_name: str
+    controller_signature: str
+    system: str
 
 
 class ControllerTypeDefault(BaseModel):

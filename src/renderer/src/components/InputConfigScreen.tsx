@@ -1,10 +1,35 @@
 import { useEffect, useRef, useState, useCallback, type MutableRefObject } from 'react'
 import { X } from 'lucide-react'
 import { api } from '../lib/api'
-import type { Controller, ReadyController, RawInputEvent, InputConfigDevice } from '../types'
+import type {
+  Controller,
+  ReadyController,
+  RawInputEvent,
+  InputConfigDevice,
+  RawBinding,
+  CustomMappingEntry
+} from '../types'
 
 const FLASH_MS = 300
 const MAX_LOG_ENTRIES = 24
+
+// Canonical Mesen face-button roles offered for custom per-game mapping,
+// per console (mirrors MesenConfigWriter.VIRTUAL_LAYOUTS minus the D-pad -
+// D-pad remapping is an axis-based problem with its own separate mechanism,
+// out of scope here). Up/Down/Left/Right aren't included: every controller
+// already has a working default D-pad, and this screen only lets you
+// reassign face buttons.
+const ROLES_BY_SYSTEM: Record<string, string[]> = {
+  Nes: ['A', 'B', 'Select', 'Start'],
+  Gameboy: ['A', 'B', 'Select', 'Start'],
+  Snes: ['A', 'B', 'X', 'Y', 'L', 'R', 'Select', 'Start'],
+  Gba: ['A', 'B', 'X', 'Y', 'L', 'R', 'Select', 'Start']
+}
+
+function describeBinding(binding: RawBinding | undefined): string {
+  if (!binding) return 'unset'
+  return binding.label ? `[${binding.label}] ${binding.code}` : binding.code
+}
 
 // Groups tiles by which physical device reported them (main controller vs. an
 // attached extension like a Nunchuk) - some devices report identical raw code
@@ -28,6 +53,9 @@ interface InputConfigScreenProps {
   connected: Controller[]
   ready: ReadyController[]
   rawInputHandlerRef: MutableRefObject<((event: RawInputEvent) => void) | null>
+  gameName: string | null
+  gameSystem: string | null
+  onGameNameChange: (name: string) => void
 }
 
 export default function InputConfigScreen({
@@ -35,7 +63,10 @@ export default function InputConfigScreen({
   onClose,
   connected,
   ready,
-  rawInputHandlerRef
+  rawInputHandlerRef,
+  gameName,
+  gameSystem,
+  onGameNameChange
 }: InputConfigScreenProps): JSX.Element | null {
   const controllers: (Controller | ReadyController)[] = [...connected, ...ready]
   const [focusedId, setFocusedId] = useState<string>('')
@@ -45,6 +76,24 @@ export default function InputConfigScreen({
   const [log, setLog] = useState<{ id: number; text: string }[]>([])
   const timers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const logIdRef = useRef(0)
+
+  // Per-game custom control mapping ("Configure controller to game") state.
+  const [gameConfigOpen, setGameConfigOpen] = useState(false)
+  const [signature, setSignature] = useState<string | null>(null)
+  const [bindings, setBindings] = useState<Record<string, RawBinding>>({})
+  const [existingMappings, setExistingMappings] = useState<CustomMappingEntry[]>([])
+  const [localGameName, setLocalGameName] = useState('')
+  const [capturingRole, setCapturingRole] = useState<string | null>(null)
+  const [saveStatus, setSaveStatus] = useState<string | null>(null)
+  // Raw input events fire from a ref-based handler set up in an effect below
+  // (see its own comment) - a plain state variable would go stale inside
+  // that closure, so capture-in-progress is tracked via a ref, mirrored into
+  // state only so the UI can re-render to show "press a button...".
+  const capturingRoleRef = useRef<string | null>(null)
+  const startCapture = (role: string) => {
+    capturingRoleRef.current = role
+    setCapturingRole(role)
+  }
 
   // Default to the first available controller when the screen opens, or when
   // the previously focused one disconnects.
@@ -79,6 +128,13 @@ export default function InputConfigScreen({
     }
     rawInputHandlerRef.current = (event: RawInputEvent) => {
       if (event.unique_id !== focusedId) return
+      if (capturingRoleRef.current && event.kind === 'key' && event.value === 1) {
+        const role = capturingRoleRef.current
+        setBindings((prev) => ({ ...prev, [role]: { label: event.source ?? '', code: event.codes[0], kind: 'key' } }))
+        capturingRoleRef.current = null
+        setCapturingRole(null)
+        return
+      }
       setLog((prev) => [{ id: logIdRef.current++, text: describeEvent(event) }, ...prev].slice(0, MAX_LOG_ENTRIES))
       const key = tileKey(event.source, event.codes[0])
       if (event.kind === 'key') {
@@ -118,7 +174,83 @@ export default function InputConfigScreen({
     setLog([])
     Array.from(timers.current.values()).forEach(clearTimeout)
     timers.current.clear()
+    setGameConfigOpen(false)
+    capturingRoleRef.current = null
+    setCapturingRole(null)
   }, [open])
+
+  const focusedController = controllers.find((c) => c.unique_id === focusedId)
+  const roles = gameSystem ? ROLES_BY_SYSTEM[gameSystem] ?? [] : []
+
+  // What's already in effect with no custom mapping - kept separately from
+  // `bindings` (the editable/displayed set) so RESET TO DEFAULT can restore
+  // it without a re-fetch.
+  const [defaultBindings, setDefaultBindings] = useState<Record<string, RawBinding>>({})
+
+  const openGameConfig = useCallback(async () => {
+    if (!focusedId || !gameSystem) return
+    setSaveStatus(null)
+    setLocalGameName(gameName ?? '')
+    setBindings({})
+    setDefaultBindings({})
+    setSignature(null)
+    setExistingMappings([])
+    setGameConfigOpen(true)
+    try {
+      const sigRes = await api.getControllerSignature(focusedId)
+      if (!sigRes.signature) return
+      setSignature(sigRes.signature)
+      const [{ bindings: defaults }, { mappings }] = await Promise.all([
+        api.getDefaultBindings(sigRes.signature, gameSystem),
+        api.getCustomMappings(sigRes.signature, gameSystem)
+      ])
+      setDefaultBindings(defaults)
+      setExistingMappings(mappings)
+      const current = mappings.find((m) => m.game_name === (gameName ?? ''))
+      // A saved mapping only needs to record what it customizes - any role
+      // it doesn't mention still falls back to the real default here too.
+      setBindings({ ...defaults, ...(current?.bindings ?? {}) })
+    } catch (err) {
+      console.error(err)
+    }
+  }, [focusedId, gameSystem, gameName])
+
+  const closeGameConfig = () => {
+    setGameConfigOpen(false)
+    capturingRoleRef.current = null
+    setCapturingRole(null)
+  }
+
+  const saveGameConfig = async () => {
+    if (!signature || !gameSystem || !localGameName.trim()) return
+    try {
+      await api.saveCustomMapping(localGameName.trim(), signature, gameSystem, bindings)
+      onGameNameChange(localGameName.trim())
+      setSaveStatus('Saved.')
+    } catch (err) {
+      console.error(err)
+      setSaveStatus('Failed to save.')
+    }
+  }
+
+  const resetGameConfig = async () => {
+    if (!signature || !gameSystem || !localGameName.trim()) return
+    try {
+      await api.resetCustomMapping(localGameName.trim(), signature, gameSystem)
+      setBindings(defaultBindings)
+      setSaveStatus('Reset to default.')
+    } catch (err) {
+      console.error(err)
+      setSaveStatus('Failed to reset.')
+    }
+  }
+
+  const copyFromMapping = (otherGameName: string) => {
+    const other = existingMappings.find((m) => m.game_name === otherGameName)
+    // Merge over defaultBindings too: an older mapping saved before this
+    // only recorded the roles it explicitly customized.
+    if (other) setBindings({ ...defaultBindings, ...other.bindings })
+  }
 
   if (!open) return null
 
@@ -145,6 +277,16 @@ export default function InputConfigScreen({
             </option>
           ))}
         </select>
+
+        <button
+          onClick={openGameConfig}
+          disabled={!focusedId || !gameSystem}
+          title={!gameSystem ? 'Select a supported ROM (Nes/Snes/Gameboy/Gba) to configure custom controls' : undefined}
+          className="ml-auto px-3 py-1.5 rounded-lg text-sm bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed transition-colors"
+        >
+          Configure {focusedController?.custom_name || focusedController?.name || 'controller'} to{' '}
+          {gameName || 'selected game'}
+        </button>
       </div>
 
       <div className="flex-1 flex overflow-hidden">
@@ -214,6 +356,91 @@ export default function InputConfigScreen({
           )}
         </div>
       </div>
+
+      {gameConfigOpen && (
+        <div className="fixed inset-0 bg-black/70 z-[70] flex items-center justify-center p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-xl w-full max-w-lg max-h-[85vh] overflow-y-auto p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold">Configure Controls</h3>
+              <button onClick={closeGameConfig} className="p-1 rounded-lg hover:bg-gray-700 transition-colors">
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-sm text-gray-400">Game name</label>
+              <input
+                value={localGameName}
+                onChange={(e) => setLocalGameName(e.target.value)}
+                className="w-full bg-gray-800 rounded px-2 py-1.5 text-sm"
+                placeholder="e.g. Super Mario Kart"
+              />
+              <p className="text-xs text-gray-500">
+                Saving under the same name here as another emulator's mapping lets them share it.
+              </p>
+            </div>
+
+            {existingMappings.filter((m) => m.game_name !== localGameName).length > 0 && (
+              <div className="space-y-1">
+                <label className="text-sm text-gray-400">Copy bindings from an existing mapping</label>
+                <select
+                  defaultValue=""
+                  onChange={(e) => {
+                    if (e.target.value) copyFromMapping(e.target.value)
+                    e.target.value = ''
+                  }}
+                  className="w-full bg-gray-800 rounded px-2 py-1.5 text-sm"
+                >
+                  <option value="">Select a game...</option>
+                  {existingMappings
+                    .filter((m) => m.game_name !== localGameName)
+                    .map((m) => (
+                      <option key={m.game_name} value={m.game_name}>
+                        {m.game_name}
+                      </option>
+                    ))}
+                </select>
+              </div>
+            )}
+
+            <div className="space-y-2">
+              {roles.map((role) => (
+                <div key={role} className="flex items-center justify-between gap-3 bg-gray-800 rounded-lg px-3 py-2">
+                  <span className="font-mono text-sm font-semibold w-16">{role}</span>
+                  <span className="flex-1 text-sm text-gray-400 truncate">
+                    {capturingRole === role ? 'Press a button...' : describeBinding(bindings[role])}
+                  </span>
+                  <button
+                    onClick={() => startCapture(role)}
+                    disabled={capturingRole !== null}
+                    className="px-2 py-1 text-xs rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-50 transition-colors"
+                  >
+                    Set
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            {saveStatus && <p className="text-xs text-gray-400">{saveStatus}</p>}
+
+            <div className="flex items-center justify-between gap-3 pt-2">
+              <button
+                onClick={resetGameConfig}
+                className="px-3 py-1.5 rounded-lg text-sm bg-red-900 hover:bg-red-800 transition-colors"
+              >
+                RESET TO DEFAULT
+              </button>
+              <button
+                onClick={saveGameConfig}
+                disabled={!signature || !localGameName.trim()}
+                className="px-3 py-1.5 rounded-lg text-sm bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed transition-colors"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

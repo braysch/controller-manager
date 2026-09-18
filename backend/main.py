@@ -23,6 +23,8 @@ from emulators.yuzu import YuzuConfigWriter
 from models import (
     ApplyConfigRequest,
     ControllerProfileUpdate,
+    CustomMappingDelete,
+    CustomMappingUpsert,
     EmulatorConfigUpdate,
     MoveToReadyRequest,
     ReadyController,
@@ -619,6 +621,7 @@ async def apply_config(req: ApplyConfigRequest = ApplyConfigRequest()):
 
         elif emu.emulator_name == "mesen":
             controllers_with_info = []
+            custom_overrides: dict[str, dict] = {}
             for r in ready:
                 # Include the custom name so name-based profile matching works for
                 # controllers that are otherwise indistinguishable (e.g. a Diswoe
@@ -632,11 +635,68 @@ async def apply_config(req: ApplyConfigRequest = ApplyConfigRequest()):
                     has_nunchuk=r.has_nunchuk,
                 )
                 controllers_with_info.append((r.unique_id, sdl_info))
-            success = mesen_writer.write_config(emu.config_path, controllers_with_info)
+                if req.game_name and req.system:
+                    spec_key = mesen_writer._profile_key(sdl_info)
+                    mapping = await database.get_custom_mappings(spec_key, req.system)
+                    match = next((m for m in mapping if m.game_name == req.game_name), None)
+                    if match:
+                        custom_overrides[r.unique_id] = mesen_writer.resolve_custom_overrides(spec_key, match.bindings)
+            success = mesen_writer.write_config(
+                emu.config_path, controllers_with_info,
+                target_system=req.system, custom_overrides=custom_overrides,
+            )
             results["mesen"] = "ok" if success else "error"
 
     results.pop("_dolphin_sdl_counts", None)
     return {"results": results}
+
+def _find_controller_by_unique_id(unique_id: str):
+    for c in state_manager.get_ready_list():
+        if c.unique_id == unique_id:
+            return c
+    for c in state_manager.get_connected_list():
+        if c.unique_id == unique_id:
+            return c
+    return None
+
+@app.get("/api/mesen/controller-signature/{unique_id}")
+async def get_controller_signature(unique_id: str):
+    """The controller-type key (see MesenConfigWriter._profile_key) custom
+    mappings are stored under - e.g. any Wiimote+Nunchuk shares one."""
+    c = _find_controller_by_unique_id(unique_id)
+    if c is None:
+        return {"error": "Controller not found"}
+    sdl_info = SDLInfo(
+        guid=getattr(c, "guid", None) or "",
+        port=getattr(c, "port", None) or 0,
+        vendor_id=c.vendor_id or 0,
+        product_id=c.product_id or 0,
+        device_name=" ".join(filter(None, [c.custom_name, c.name])),
+        has_nunchuk=getattr(c, "has_nunchuk", False),
+    )
+    return {"signature": mesen_writer._profile_key(sdl_info)}
+
+@app.get("/api/custom-mappings")
+async def list_custom_mappings(controller_signature: str, system: str):
+    mappings = await database.get_custom_mappings(controller_signature, system)
+    return {"mappings": mappings}
+
+@app.get("/api/mesen/default-bindings")
+async def get_default_bindings(controller_signature: str, system: str):
+    """The raw physical binding for every face-button role this controller
+    type uses BY DEFAULT (no custom mapping) - lets the custom-mapping UI
+    show what's actually already in effect instead of "unset"."""
+    return {"bindings": mesen_writer.resolve_default_bindings(controller_signature, system)}
+
+@app.put("/api/custom-mappings")
+async def save_custom_mapping(req: CustomMappingUpsert):
+    result = await database.upsert_custom_mapping(req.game_name, req.controller_signature, req.system, req.bindings)
+    return result
+
+@app.delete("/api/custom-mappings")
+async def reset_custom_mapping(req: CustomMappingDelete):
+    removed = await database.delete_custom_mapping(req.game_name, req.controller_signature, req.system)
+    return {"removed": removed}
 
 @app.get("/api/assets/images")
 async def list_images():

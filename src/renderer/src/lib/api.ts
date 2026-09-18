@@ -1,4 +1,4 @@
-import type { InputConfigFocusResponse } from '../types'
+import type { CustomMappingEntry, InputConfigFocusResponse, RawBinding } from '../types'
 
 const API_BASE = 'http://127.0.0.1:8000/api'
 
@@ -60,10 +60,40 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(data)
     }),
-  applyConfig: (emulator?: string | null, force?: boolean) =>
+  applyConfig: (emulator?: string | null, force?: boolean, gameName?: string | null, system?: string | null) =>
     request('/emulators/apply', {
       method: 'POST',
-      body: JSON.stringify({ emulator: emulator ?? null, force: force ?? false }),
+      body: JSON.stringify({
+        emulator: emulator ?? null,
+        force: force ?? false,
+        game_name: gameName ?? null,
+        system: system ?? null
+      }),
+    }),
+
+  getControllerSignature: (unique_id: string) =>
+    request<{ signature?: string; error?: string }>(`/mesen/controller-signature/${encodeURIComponent(unique_id)}`),
+
+  getDefaultBindings: (controllerSignature: string, system: string) =>
+    request<{ bindings: Record<string, RawBinding> }>(
+      `/mesen/default-bindings?controller_signature=${encodeURIComponent(controllerSignature)}&system=${encodeURIComponent(system)}`
+    ),
+
+  getCustomMappings: (controllerSignature: string, system: string) =>
+    request<{ mappings: CustomMappingEntry[] }>(
+      `/custom-mappings?controller_signature=${encodeURIComponent(controllerSignature)}&system=${encodeURIComponent(system)}`
+    ),
+
+  saveCustomMapping: (gameName: string, controllerSignature: string, system: string, bindings: Record<string, RawBinding>) =>
+    request('/custom-mappings', {
+      method: 'PUT',
+      body: JSON.stringify({ game_name: gameName, controller_signature: controllerSignature, system, bindings })
+    }),
+
+  resetCustomMapping: (gameName: string, controllerSignature: string, system: string) =>
+    request('/custom-mappings', {
+      method: 'DELETE',
+      body: JSON.stringify({ game_name: gameName, controller_signature: controllerSignature, system })
     }),
 
   forceConnectController: (unique_id: string) =>

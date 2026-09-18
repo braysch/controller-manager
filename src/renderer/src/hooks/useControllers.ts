@@ -89,7 +89,7 @@ export function useControllers() {
         return
       }
       if (action.type === 'APPLY_CONFIG') {
-        api.applyConfig(action.emulatorTarget, action.force)
+        api.applyConfig(action.emulatorTarget, action.force, action.gameName, action.system)
           .then(() => api.sessionLaunched().catch(console.error))
           .then(() => window.api.signalLaunch(action.gamePath))
           .catch(console.error)

@@ -8,6 +8,7 @@ import InputConfigScreen from './components/InputConfigScreen'
 import { useWebSocket } from './hooks/useWebSocket'
 import { useControllers } from './hooks/useControllers'
 import { api } from './lib/api'
+import { baseNameNoExt, parseGameTitle, systemForGamePath } from './lib/gameInfo'
 import type { RawInputEvent } from './types'
 
 function App(): JSX.Element {
@@ -18,6 +19,13 @@ function App(): JSX.Element {
   const [emulatorTarget, setEmulatorTarget] = useState<string | null>(null)
   const [manualEmulator, setManualEmulator] = useState<string>('yuzu')
   const [manualGame, setManualGame] = useState<string | null>(null)
+  // Derived once per selected game (from Pegasus metadata when available,
+  // else the filename) so Input Config's "Configure controls" and the
+  // apply-config launch flow always agree on the same lookup key for custom
+  // mappings - editable via Input Config in case metadata parsing is wrong
+  // or missing.
+  const [gameName, setGameName] = useState<string | null>(null)
+  const gameSystem = manualGame ? systemForGamePath(manualGame) : null
 
   // Raw input events are only consumed by InputConfigScreen while it's open;
   // routing them through a ref avoids re-rendering the whole app on every press.
@@ -27,12 +35,37 @@ function App(): JSX.Element {
   }, [])
 
   useEffect(() => {
-    window.api.getLaunchPaths().then(({ gameFolder, emulatorFolder, emulatorTarget }) => {
+    window.api.getLaunchPaths().then(({ gameFolder, gamePath, emulatorFolder, emulatorTarget }) => {
       setGameFolder(gameFolder)
       setEmulatorFolder(emulatorFolder)
       setEmulatorTarget(emulatorTarget)
+      // When launched normally (via an emulate.sh wrapper, e.g. from
+      // Pegasus), the real game path IS available here - without this, only
+      // the manual "Choose Game" testing dialog ever set manualGame, so
+      // gameSystem/gameName (and therefore custom mapping lookup) never
+      // resolved during a real launch.
+      if (gamePath) setManualGame(gamePath)
     })
   }, [])
+
+  useEffect(() => {
+    if (!manualGame) {
+      setGameName(null)
+      return
+    }
+    const fallback = baseNameNoExt(manualGame)
+    if (!gameFolder) {
+      setGameName(fallback)
+      return
+    }
+    window.electron
+      .readMetadata(gameFolder)
+      .then((result) => {
+        const title = result.success ? parseGameTitle(result.content, manualGame) : null
+        setGameName(title ?? fallback)
+      })
+      .catch(() => setGameName(fallback))
+  }, [manualGame, gameFolder])
 
   // Both Shift keys held together ready the virtual keyboard controller.
   // Disabled while Input Config is open so testing the keyboard's buttons
@@ -76,7 +109,14 @@ function App(): JSX.Element {
   } = useWebSocket(
     dispatch,
     () => {
-      if (ready.length > 0) dispatch({ type: 'APPLY_CONFIG', emulatorTarget: activeEmulatorTarget, gamePath: manualGame })
+      if (ready.length > 0)
+        dispatch({
+          type: 'APPLY_CONFIG',
+          emulatorTarget: activeEmulatorTarget,
+          gamePath: manualGame,
+          gameName,
+          system: gameSystem
+        })
     },
     handleRawInput
   )
@@ -108,6 +148,8 @@ function App(): JSX.Element {
             type: 'APPLY_CONFIG',
             emulatorTarget: activeEmulatorTarget,
             gamePath: manualGame,
+            gameName,
+            system: gameSystem,
             force
           })
         }
@@ -136,6 +178,9 @@ function App(): JSX.Element {
         connected={connected}
         ready={ready}
         rawInputHandlerRef={rawInputHandlerRef}
+        gameName={gameName}
+        gameSystem={gameSystem}
+        onGameNameChange={setGameName}
       />
     </div>
   )

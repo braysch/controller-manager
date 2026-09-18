@@ -7,6 +7,7 @@ import * as path from 'path'
 
 function getLaunchPaths(): {
   gameFolder: string | null
+  gamePath: string | null
   emulatorFolder: string | null
   emulatorTarget: string | null
 } {
@@ -15,8 +16,16 @@ function getLaunchPaths(): {
     .slice(1)
     .filter((arg) => !arg.startsWith('-') && !arg.endsWith('.js') && !arg.includes('app.asar'))
   const emulatorFlag = process.argv.find((arg) => arg.startsWith('--emulator='))
+  // Every emulate.sh wrapper invokes us with "<the actual ROM/ISO path>/.."
+  // as this argument (so read-metadata's path.join can normalize it down to
+  // the enclosing folder without needing a real, separately-passed folder
+  // arg) - path.normalize collapses that trailing ".." the same way, and
+  // stripping it back off recovers the real game path Pegasus launched with.
+  const rawGameArg = positional[0] ?? null
+  const gamePath = rawGameArg && rawGameArg.endsWith('/..') ? rawGameArg.slice(0, -3) : null
   return {
-    gameFolder: positional[0] ?? null,
+    gameFolder: rawGameArg ? path.normalize(rawGameArg) : null,
+    gamePath,
     emulatorFolder: positional[1] ?? null,
     emulatorTarget: emulatorFlag ? emulatorFlag.split('=')[1] : null,
   }

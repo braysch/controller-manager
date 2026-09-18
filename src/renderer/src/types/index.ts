@@ -81,6 +81,22 @@ export interface InputConfigFocusResponse {
   devices: InputConfigDevice[]
 }
 
+// A physical binding captured from Input Config's raw-input stream for one
+// canonical Mesen role - label/code match RawInputEvent.source/codes[0]
+// exactly, since that's how it's captured.
+export interface RawBinding {
+  label: string
+  code: string
+  kind: 'key'
+}
+
+export interface CustomMappingEntry {
+  game_name: string
+  controller_signature: string
+  system: string
+  bindings: Record<string, RawBinding>
+}
+
 export type WSEvent =
   | { type: 'controller_connected'; data: Controller }
   | { type: 'controller_disconnected'; data: { unique_id: string } }
@@ -103,4 +119,11 @@ export type ControllerAction =
   | { type: 'CONTROLLER_UNREADY'; unique_id: string }
   | { type: 'BATTERY_UPDATE'; unique_id: string; battery_percent: number }
   | { type: 'REASSIGN' }
-  | { type: 'APPLY_CONFIG'; emulatorTarget?: string | null; gamePath?: string | null; force?: boolean }
+  | {
+      type: 'APPLY_CONFIG'
+      emulatorTarget?: string | null
+      gamePath?: string | null
+      gameName?: string | null
+      system?: string | null
+      force?: boolean
+    }

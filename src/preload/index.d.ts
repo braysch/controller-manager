@@ -14,6 +14,7 @@ declare global {
       signalLaunch: (gamePath?: string | null) => void
       getLaunchPaths: () => Promise<{
         gameFolder: string | null
+        gamePath: string | null
         emulatorFolder: string | null
         emulatorTarget: string | null
       }>

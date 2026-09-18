@@ -1,9 +1,10 @@
 import aiosqlite
+import json
 from typing import Optional
 from config import DB_PATH
-from models import ControllerProfile, ControllerTypeDefault, EmulatorConfig
+from models import ControllerProfile, ControllerTypeDefault, EmulatorConfig, CustomMapping
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 CREATE_TABLES = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -44,6 +45,25 @@ CREATE TABLE IF NOT EXISTS controller_type_defaults (
     guid_override TEXT,
     start_button INTEGER,
     UNIQUE(name_pattern, vendor_id, product_id)
+);
+
+-- Per-game custom button mappings. "controller_signature" identifies a
+-- controller TYPE (e.g. "wii_nunchuk", "xbox" - see MesenConfigWriter's
+-- profile keys), not one specific physical unit, so any Wiimote+Nunchuk
+-- shares the same mapping. Keying by (game_name, controller_signature,
+-- system) rather than a single mapping id per row is deliberate: it lets a
+-- mapping be freely "reused" for a second game just by saving it again
+-- under that game's name (typically pre-filled by copying an existing
+-- entry's bindings in the UI), without needing a many-to-many join table.
+CREATE TABLE IF NOT EXISTS custom_mappings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    game_name TEXT NOT NULL,
+    controller_signature TEXT NOT NULL,
+    system TEXT NOT NULL,
+    bindings TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(game_name, controller_signature, system)
 );
 """
 
@@ -513,6 +533,53 @@ async def get_all_emulator_configs() -> list[EmulatorConfig]:
         rows = await cursor.fetchall()
         return [EmulatorConfig(id=r[0], emulator_name=r[1], config_path=r[2], enabled=bool(r[3])) for r in rows]
     finally: await db.close()
+
+
+async def get_custom_mappings(controller_signature: str, system: str) -> list[CustomMapping]:
+    """All per-game mappings saved for a controller type on a system - used
+    both to look up the mapping for one specific game and to populate a
+    "copy from an existing mapping" list of other games already configured."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT game_name, controller_signature, system, bindings FROM custom_mappings "
+            "WHERE controller_signature = ? AND system = ? ORDER BY updated_at DESC",
+            (controller_signature, system),
+        )
+        rows = await cursor.fetchall()
+        return [
+            CustomMapping(game_name=r[0], controller_signature=r[1], system=r[2], bindings=json.loads(r[3]))
+            for r in rows
+        ]
+    finally:
+        await db.close()
+
+
+async def upsert_custom_mapping(game_name: str, controller_signature: str, system: str, bindings: dict) -> CustomMapping:
+    db = await get_db()
+    try:
+        await db.execute(
+            "INSERT INTO custom_mappings (game_name, controller_signature, system, bindings) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(game_name, controller_signature, system) DO UPDATE SET bindings = excluded.bindings, updated_at = CURRENT_TIMESTAMP",
+            (game_name, controller_signature, system, json.dumps(bindings)),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+    return CustomMapping(game_name=game_name, controller_signature=controller_signature, system=system, bindings=bindings)
+
+
+async def delete_custom_mapping(game_name: str, controller_signature: str, system: str) -> bool:
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "DELETE FROM custom_mappings WHERE game_name = ? AND controller_signature = ? AND system = ?",
+            (game_name, controller_signature, system),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+    finally:
+        await db.close()
 
 
 async def update_emulator_config(emulator_name: str, config_path: Optional[str] = None, enabled: Optional[bool] = None) -> Optional[EmulatorConfig]:

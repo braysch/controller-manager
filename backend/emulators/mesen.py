@@ -4,8 +4,10 @@ import json
 import os
 from typing import Optional
 
+from evdev import ecodes
 from emulators.base import EmulatorConfigWriter
 from controllers.device_matcher import SDLInfo
+from controllers.evdev_monitor import _WIIMOTE_TRANSLATE, _NUNCHUK_TRANSLATE, _JOYCON_L_TRANSLATE
 
 _DPAD = {"Up": ("Up",), "Down": ("Down",), "Left": ("Left",), "Right": ("Right",)}
 
@@ -224,33 +226,145 @@ class MesenConfigWriter(EmulatorConfigWriter):
         """Calculate Mesen ID base for a specific physical joystick index."""
         return self.GAMEPAD_BASE + (self.DEVICE_OFFSET * physical_port)
 
-    def _get_profile(self, sdl_info: Optional[SDLInfo]) -> dict:
-        """Select the physical controller profile spec (unresolved: default + per_system)."""
+    # Profile keys whose bridge (see evdev_monitor.py) re-emits a real
+    # device's raw signals through a synthetic gamepad, rather than Mesen
+    # reading the real device directly - custom-mapping resolution needs to
+    # know this to translate a captured raw binding through that same bridge
+    # table instead of using its raw evdev code arithmetically (see
+    # _resolve_custom_slot).
+    _BRIDGED_PROFILE_KEYS = {"wii", "wii_nunchuk", "joycon_l"}
+
+    def _profile_key(self, sdl_info: Optional[SDLInfo]) -> str:
+        """Classify a controller into one of CONTROLLER_PROFILES' keys - also
+        doubles as the "controller_signature" custom mappings are stored
+        under, so e.g. any Wiimote+Nunchuk shares one mapping per game."""
         name_lower = sdl_info.device_name.lower() if sdl_info else ""
         vid = sdl_info.vendor_id if sdl_info else 0
         pid = sdl_info.product_id if sdl_info else 0
 
         if "keyboard" in name_lower:
-            return self.CONTROLLER_PROFILES["keyboard"]
+            return "keyboard"
         # Diswoe/Switch-Lite clones report the Switch Pro VID/PID and device name,
         # so they can only be recognized by their (custom) profile name.
         if "diswoe" in name_lower:
-            return self.CONTROLLER_PROFILES["diswoe"]
+            return "diswoe"
         if "wii remote" in name_lower or (vid == 0x057E and pid == 0x0306):
             if sdl_info is not None and sdl_info.has_nunchuk:
-                return self.CONTROLLER_PROFILES["wii_nunchuk"]
-            return self.CONTROLLER_PROFILES["wii"]
+                return "wii_nunchuk"
+            return "wii"
         # Joy-Con (R)/(L), used solo and held sideways - product_ids match
         # state_manager.py's own combined-Joy-Con detection.
         if (name_lower.endswith("(r)") and "joy-con" in name_lower) or (vid == 0x057E and pid == 0x2007):
-            return self.CONTROLLER_PROFILES["joycon_r"]
+            return "joycon_r"
         if (name_lower.endswith("(l)") and "joy-con" in name_lower) or (vid == 0x057E and pid == 0x2006):
-            return self.CONTROLLER_PROFILES["joycon_l"]
+            return "joycon_l"
         if "lic" in name_lower or (vid == 0x057E and pid == 0x2009):
-            return self.CONTROLLER_PROFILES["lic"]
+            return "lic"
         if "snes" in name_lower or (vid == 0x0079 and pid == 0x0126) or (vid == 0x057E and pid == 0x2017):
-            return self.CONTROLLER_PROFILES["snes"]
-        return self.CONTROLLER_PROFILES["xbox"]
+            return "snes"
+        return "xbox"
+
+    def _get_profile(self, sdl_info: Optional[SDLInfo]) -> dict:
+        """Select the physical controller profile spec (unresolved: default + per_system)."""
+        return self.CONTROLLER_PROFILES[self._profile_key(sdl_info)]
+
+    def _custom_slot_candidates(self, spec_key: str, binding: dict) -> list:
+        """Every Mesen slot a captured raw-input binding's physical press
+        already drives (bridged devices fire more than one at once - see
+        _WIIMOTE_TRANSLATE), most-preferred first. Only key-type (button)
+        bindings are supported - D-pad roles keep their existing dedicated
+        axis handling."""
+        if binding.get("kind") != "key":
+            return []
+        code = ecodes.ecodes.get(binding.get("code", ""))
+        if code is None:
+            return []
+        label = (binding.get("label") or "").lower()
+        if spec_key in ("wii", "wii_nunchuk"):
+            targets = _NUNCHUK_TRANSLATE.get(code, ()) if label == "nunchuk" else _WIIMOTE_TRANSLATE.get(code, ())
+            return [t - 0x130 for t in targets if 0x130 <= t <= 0x13e]
+        if spec_key == "joycon_l":
+            if code in _JOYCON_L_TRANSLATE:
+                return [t - 0x130 for t in _JOYCON_L_TRANSLATE[code] if 0x130 <= t <= 0x13e]
+            if 0x130 <= code <= 0x13e:
+                return [code - 0x130]  # passed through unchanged by the bridge
+            return []
+        if 0x130 <= code <= 0x13e:
+            return [code - 0x130]  # not bridged - Mesen reads the real device directly
+        return []
+
+    def resolve_custom_overrides(self, spec_key: str, bindings: dict) -> dict:
+        """Convert a whole stored mapping (role -> raw binding) into role ->
+        Mesen slot number for one controller, skipping any role whose
+        binding can't be resolved (e.g. it collides with another role in
+        this SAME mapping already claiming the only slot that press
+        produces). Also returns "_superseded": every other slot the same
+        physical presses drive (see _custom_slot_candidates - a bridged
+        button fires several slots on every press), so the caller can strip
+        whatever default role used to read one of those, or the button would
+        keep triggering its old role in addition to the new one."""
+        used: set = set()
+        result: dict = {}
+        superseded: set = set()
+        for role, binding in bindings.items():
+            candidates = self._custom_slot_candidates(spec_key, binding)
+            chosen = next((c for c in candidates if c not in used), None)
+            if chosen is None:
+                continue
+            result[role] = chosen
+            used.add(chosen)
+            superseded.update(candidates)
+        result["_superseded"] = superseded
+        return result
+
+    @staticmethod
+    def _code_name(code: int) -> str:
+        name = ecodes.keys.get(code, str(code))
+        return name[0] if isinstance(name, (list, tuple)) else name
+
+    def _reverse_slot(self, spec_key: str, slot: int) -> Optional[dict]:
+        """Inverse of _custom_slot_candidates: given a Mesen slot this
+        profile's default table already assigns to some role, find a raw
+        physical binding that would produce it - so the custom-mapping UI
+        can show "what's already in effect" instead of "unset" for a role
+        nobody has customized yet."""
+        code = 0x130 + slot
+        if spec_key in ("wii", "wii_nunchuk"):
+            for real_code, targets in _WIIMOTE_TRANSLATE.items():
+                if code in targets:
+                    return {"label": "", "code": self._code_name(real_code), "kind": "key"}
+            for real_code, targets in _NUNCHUK_TRANSLATE.items():
+                if code in targets:
+                    return {"label": "Nunchuk", "code": self._code_name(real_code), "kind": "key"}
+            return None
+        if spec_key == "joycon_l":
+            for real_code, targets in _JOYCON_L_TRANSLATE.items():
+                if code in targets:
+                    return {"label": "", "code": self._code_name(real_code), "kind": "key"}
+            return {"label": "", "code": self._code_name(code), "kind": "key"}  # passed through unchanged
+        return {"label": "", "code": self._code_name(code), "kind": "key"}  # not bridged
+
+    def resolve_default_bindings(self, spec_key: str, layout: str) -> dict:
+        """The raw physical binding for every face-button role this
+        controller type currently uses BY DEFAULT for this system (no custom
+        mapping applied) - i.e. what's actually in effect when a game
+        launches without a custom override."""
+        spec = self.CONTROLLER_PROFILES[spec_key]
+        profile = self._resolve_profile(spec, layout)
+        result: dict = {}
+        for role, slot in profile.items():
+            if role in ("Up", "Down", "Left", "Right"):
+                continue  # D-pad isn't offered for custom mapping in this UI
+            if not (0 <= slot <= 14):
+                # Some entries (e.g. "xbox"'s TriggerL/TriggerR, used as a
+                # GBA-only fallback for X/Y) are Mesen's separate analog-axis
+                # ID scheme, not a `evdev_code - 0x130` button slot - nothing
+                # to reverse-lookup a physical key press from.
+                continue
+            binding = self._reverse_slot(spec_key, slot)
+            if binding is not None:
+                result[role] = binding
+        return result
 
     def _resolve_profile(self, spec: dict, layout: str) -> dict:
         """Merge a profile spec's console-invariant defaults with the face-button
@@ -288,10 +402,25 @@ class MesenConfigWriter(EmulatorConfigWriter):
         for k, button in ids.items():
             mapping[k] = base + button
 
-    def _write_node(self, node: dict, layout: str, sdl_info: Optional[SDLInfo], player_index: int, template: Optional[dict] = None) -> None:
-        """Write Mapping1-4 for one virtual controller node."""
+    def _write_node(
+        self, node: dict, layout: str, sdl_info: Optional[SDLInfo], player_index: int,
+        template: Optional[dict] = None, custom: Optional[dict] = None,
+    ) -> None:
+        """Write Mapping1-4 for one virtual controller node. `custom`, when
+        given, is a role -> Mesen slot dict (see resolve_custom_overrides)
+        that overrides this one system's face buttons for this one game -
+        every other system in the same settings.json keeps its default."""
         spec = self._get_profile(sdl_info)
         profile = self._resolve_profile(spec, layout)
+        if custom:
+            superseded = custom.get("_superseded", set())
+            roles = {k: v for k, v in custom.items() if k != "_superseded"}
+            # Drop any default role whose slot is one of the ones a
+            # newly-assigned physical button also fires (see
+            # resolve_custom_overrides) - otherwise it would keep triggering
+            # its old role in addition to the new custom one.
+            profile = {k: v for k, v in profile.items() if v not in superseded}
+            profile = {**profile, **roles}
         m1 = self._layout_buttons(profile, layout)
 
         if spec is self.CONTROLLER_PROFILES["keyboard"]:
@@ -330,8 +459,16 @@ class MesenConfigWriter(EmulatorConfigWriter):
         self,
         config_path: str,
         controllers: list[tuple[str, Optional[SDLInfo]]],
+        target_system: Optional[str] = None,
+        custom_overrides: Optional[dict] = None,
     ) -> bool:
-        """controllers: (unique_id, sdl_info) per player slot."""
+        """controllers: (unique_id, sdl_info) per player slot. `target_system`
+        + `custom_overrides` (unique_id -> role->slot dict, see
+        resolve_custom_overrides) apply a per-game custom mapping to ONLY the
+        system the currently-selected game belongs to - every other system's
+        section in the same settings.json keeps using the normal default
+        profile, since it's unrelated to what's about to be launched."""
+        custom_overrides = custom_overrides or {}
         try:
             config_path = os.path.expanduser(config_path)
             # Use utf-8-sig for BOTH reading and writing to handle the BOM
@@ -345,6 +482,7 @@ class MesenConfigWriter(EmulatorConfigWriter):
                 self._clear_system(section, info)
 
                 for player_index, (unique_id, sdl_info) in enumerate(controllers):
+                    custom = custom_overrides.get(unique_id) if system == target_system else None
                     if info["style"] == "ports":
                         if player_index >= info["max_players"]:
                             break
@@ -356,13 +494,13 @@ class MesenConfigWriter(EmulatorConfigWriter):
                             section[pk] = {}
                         template = section.get("Port1", {}).get("Mapping1")
                         section[pk]["Type"] = info["type"]
-                        self._write_node(section[pk], system, sdl_info, player_index, template)
+                        self._write_node(section[pk], system, sdl_info, player_index, template, custom)
                     elif info["style"] == "single":
                         if player_index > 0:
                             break
                         node = section.setdefault("Controller", {})
                         node["Type"] = info["type"]
-                        self._write_node(node, system, sdl_info, player_index)
+                        self._write_node(node, system, sdl_info, player_index, custom=custom)
                     else:  # ws: one player, horizontal + vertical orientations
                         if player_index > 0:
                             break
@@ -372,7 +510,7 @@ class MesenConfigWriter(EmulatorConfigWriter):
                         ):
                             node = section.setdefault(node_key, {})
                             node["Type"] = type_name
-                            self._write_node(node, layout, sdl_info, player_index)
+                            self._write_node(node, layout, sdl_info, player_index, custom=custom)
 
             with open(config_path, "w", encoding="utf-8-sig") as f:
                 json.dump(config, f, indent=2)
