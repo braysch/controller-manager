@@ -294,19 +294,25 @@ class MesenConfigWriter(EmulatorConfigWriter):
         return []
 
     def resolve_custom_overrides(self, spec_key: str, bindings: dict) -> dict:
-        """Convert a whole stored mapping (role -> raw binding) into role ->
-        Mesen slot number for one controller, skipping any role whose
-        binding can't be resolved (e.g. it collides with another role in
-        this SAME mapping already claiming the only slot that press
-        produces). Also returns "_superseded": every other slot the same
-        physical presses drive (see _custom_slot_candidates - a bridged
-        button fires several slots on every press), so the caller can strip
-        whatever default role used to read one of those, or the button would
-        keep triggering its old role in addition to the new one."""
+        """Convert a whole stored mapping (role -> raw binding, or None for
+        "deliberately left unmapped") into role -> Mesen slot number for one
+        controller, skipping any role whose binding can't be resolved (e.g.
+        it collides with another role in this SAME mapping already claiming
+        the only slot that press produces). Also returns "_superseded":
+        every other slot the same physical presses drive (see
+        _custom_slot_candidates - a bridged button fires several slots on
+        every press), and "_cleared": every role explicitly set to None - the
+        caller strips both a superseded default role's slot and a cleared
+        role entirely, or the game would still see the default binding.
+        """
         used: set = set()
         result: dict = {}
         superseded: set = set()
+        cleared: set = set()
         for role, binding in bindings.items():
+            if binding is None:
+                cleared.add(role)
+                continue
             candidates = self._custom_slot_candidates(spec_key, binding)
             chosen = next((c for c in candidates if c not in used), None)
             if chosen is None:
@@ -315,6 +321,7 @@ class MesenConfigWriter(EmulatorConfigWriter):
             used.add(chosen)
             superseded.update(candidates)
         result["_superseded"] = superseded
+        result["_cleared"] = cleared
         return result
 
     @staticmethod
@@ -414,12 +421,15 @@ class MesenConfigWriter(EmulatorConfigWriter):
         profile = self._resolve_profile(spec, layout)
         if custom:
             superseded = custom.get("_superseded", set())
-            roles = {k: v for k, v in custom.items() if k != "_superseded"}
+            cleared = custom.get("_cleared", set())
+            roles = {k: v for k, v in custom.items() if k not in ("_superseded", "_cleared")}
             # Drop any default role whose slot is one of the ones a
             # newly-assigned physical button also fires (see
             # resolve_custom_overrides) - otherwise it would keep triggering
-            # its old role in addition to the new custom one.
-            profile = {k: v for k, v in profile.items() if v not in superseded}
+            # its old role in addition to the new custom one. Also drop any
+            # role explicitly cleared to "no mapping" outright, rather than
+            # letting it fall back to the default.
+            profile = {k: v for k, v in profile.items() if v not in superseded and k not in cleared}
             profile = {**profile, **roles}
         m1 = self._layout_buttons(profile, layout)
 

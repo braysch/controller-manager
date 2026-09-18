@@ -26,7 +26,8 @@ const ROLES_BY_SYSTEM: Record<string, string[]> = {
   Gba: ['A', 'B', 'X', 'Y', 'L', 'R', 'Select', 'Start']
 }
 
-function describeBinding(binding: RawBinding | undefined): string {
+function describeBinding(binding: RawBinding | null | undefined): string {
+  if (binding === null) return '(no mapping)'
   if (!binding) return 'unset'
   return binding.label ? `[${binding.label}] ${binding.code}` : binding.code
 }
@@ -80,7 +81,7 @@ export default function InputConfigScreen({
   // Per-game custom control mapping ("Configure controller to game") state.
   const [gameConfigOpen, setGameConfigOpen] = useState(false)
   const [signature, setSignature] = useState<string | null>(null)
-  const [bindings, setBindings] = useState<Record<string, RawBinding>>({})
+  const [bindings, setBindings] = useState<Record<string, RawBinding | null>>({})
   const [existingMappings, setExistingMappings] = useState<CustomMappingEntry[]>([])
   const [localGameName, setLocalGameName] = useState('')
   const [capturingRole, setCapturingRole] = useState<string | null>(null)
@@ -416,6 +417,14 @@ export default function InputConfigScreen({
                     className="px-2 py-1 text-xs rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-50 transition-colors"
                   >
                     Set
+                  </button>
+                  <button
+                    onClick={() => setBindings((prev) => ({ ...prev, [role]: null }))}
+                    disabled={capturingRole !== null || bindings[role] === null}
+                    title="Leave this button unmapped"
+                    className="px-2 py-1 text-xs rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-50 transition-colors"
+                  >
+                    Clear
                   </button>
                 </div>
               ))}

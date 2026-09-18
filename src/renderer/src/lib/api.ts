@@ -84,7 +84,7 @@ export const api = {
       `/custom-mappings?controller_signature=${encodeURIComponent(controllerSignature)}&system=${encodeURIComponent(system)}`
     ),
 
-  saveCustomMapping: (gameName: string, controllerSignature: string, system: string, bindings: Record<string, RawBinding>) =>
+  saveCustomMapping: (gameName: string, controllerSignature: string, system: string, bindings: Record<string, RawBinding | null>) =>
     request('/custom-mappings', {
       method: 'PUT',
       body: JSON.stringify({ game_name: gameName, controller_signature: controllerSignature, system, bindings })

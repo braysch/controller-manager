@@ -94,7 +94,9 @@ export interface CustomMappingEntry {
   game_name: string
   controller_signature: string
   system: string
-  bindings: Record<string, RawBinding>
+  // A role mapped to null is deliberately left unmapped (distinct from a
+  // role simply absent, which falls back to the controller's normal default).
+  bindings: Record<string, RawBinding | null>
 }
 
 export type WSEvent =

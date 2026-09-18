@@ -99,15 +99,18 @@ class CustomMapping(BaseModel):
     controller_signature: str
     system: str
     # Role name (e.g. "A", "Select") -> raw physical binding captured from
-    # Input Config's raw-input stream: {"label": str, "code": str, "kind": "key"}.
-    bindings: dict[str, dict]
+    # Input Config's raw-input stream: {"label": str, "code": str, "kind": "key"}
+    # - or explicitly None, meaning the role is deliberately left unmapped
+    # (distinct from a role simply absent from this dict, which falls back
+    # to the controller type's normal default instead).
+    bindings: dict[str, Optional[dict]]
 
 
 class CustomMappingUpsert(BaseModel):
     game_name: str
     controller_signature: str
     system: str
-    bindings: dict[str, dict]
+    bindings: dict[str, Optional[dict]]
 
 
 class CustomMappingDelete(BaseModel):
