@@ -264,12 +264,19 @@ async def on_battery_update(device_path: str, percent: int):
         state_manager.update_battery(unique_id, percent)
         await ws_manager.broadcast("battery_update", {"unique_id": unique_id, "battery_percent": percent})
 
-async def on_raw_input(device_path: str, kind: str, codes: list[str], value: int, min_val: Optional[int], max_val: Optional[int]):
+async def on_extension_changed(unique_id: str, has_nunchuk: bool):
+    """Called by evdev_monitor when a Nunchuk attaches to/detaches from a Wii Remote."""
+    controller = state_manager.set_has_nunchuk(unique_id, has_nunchuk)
+    if controller:
+        event_type = "controller_ready" if isinstance(controller, ReadyController) else "controller_connected"
+        await ws_manager.broadcast(event_type, controller.model_dump())
+
+async def on_raw_input(device_path: str, kind: str, codes: list[str], value: int, min_val: Optional[int], max_val: Optional[int], source: str):
     """Called by evdev_monitor for every key/axis event on the focused Input Config device."""
     unique_id = state_manager.get_unique_id_for_path(device_path)
     if not unique_id:
         return
-    payload: dict[str, Any] = {"unique_id": unique_id, "kind": kind, "codes": codes, "value": value}
+    payload: dict[str, Any] = {"unique_id": unique_id, "kind": kind, "codes": codes, "value": value, "source": source}
     if min_val is not None:
         payload["min"] = min_val
     if max_val is not None:
@@ -289,6 +296,7 @@ async def lifespan(app: FastAPI):
     evdev_monitor.on_input = on_input
     evdev_monitor.on_start_pressed = on_start_pressed
     evdev_monitor.on_raw_input = on_raw_input
+    evdev_monitor.on_extension_changed = on_extension_changed
     battery_monitor.on_update = on_battery_update
 
     # Register the keyboard as an always-connected virtual controller.
@@ -390,7 +398,8 @@ async def set_input_config_focus(req: InputConfigFocusRequest):
     """Stream every raw button/axis event for one controller (Input Config screen)."""
     path = state_manager.get_path_for_unique_id(req.unique_id) if req.unique_id else None
     evdev_monitor.set_focus(path)
-    return {"status": "ok", "focused": req.unique_id}
+    devices = evdev_monitor.get_focus_capabilities(path) if path else []
+    return {"status": "ok", "focused": req.unique_id, "devices": devices}
 
 @app.delete("/api/controllers/ready")
 async def clear_ready():
@@ -620,6 +629,7 @@ async def apply_config(req: ApplyConfigRequest = ApplyConfigRequest()):
                     vendor_id=r.vendor_id or 0,
                     product_id=r.product_id or 0,
                     device_name=" ".join(filter(None, [r.custom_name, r.name])),
+                    has_nunchuk=r.has_nunchuk,
                 )
                 controllers_with_info.append((r.unique_id, sdl_info))
             success = mesen_writer.write_config(emu.config_path, controllers_with_info)

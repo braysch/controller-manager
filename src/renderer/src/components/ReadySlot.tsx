@@ -30,7 +30,16 @@ export default function ReadySlot({ controller, slotIndex, poppingControllers }:
     <div className="flex flex-col items-center">
       <div className="flex flex-col items-center justify-between rounded-xl border-2 border-blue-500/50 bg-gray-800 p-3 w-full aspect-square max-w-[400px] relative">
         <PlayerIndicator playerNumber={slotIndex + 1} />
-        
+
+        {/* Temporary indicator until we have a real Nunchuk graphic */}
+        {controller.has_nunchuk && (
+          <div className="absolute top-2 left-2 bg-yellow-500/90 px-2 py-0.5 rounded-md border border-white/20">
+            <span className="text-[10px] font-bold text-black uppercase tracking-tighter">
+              + Nunchuk
+            </span>
+          </div>
+        )}
+
         {/* Debug: Mesen Pad Number */}
         <div className="absolute top-2 right-2 bg-black/60 px-2 py-0.5 rounded-md border border-white/20">
           <span className="text-[10px] font-mono text-blue-400 uppercase tracking-tighter">

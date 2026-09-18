@@ -129,6 +129,7 @@ class StateManager:
             component_imgs=component_imgs, device_path=device_path,
             tr2_is_start=connected.tr2_is_start,
             start_button_override=connected.start_button_override,
+            has_nunchuk=connected.has_nunchuk,
         )
         self._ready[device_path] = ready
         return ready
@@ -143,6 +144,7 @@ class StateManager:
                 product_id=ready.product_id, guid=ready.guid, port=ready.port,
                 device_path=ready.device_path, tr2_is_start=ready.tr2_is_start,
                 start_button_override=ready.start_button_override,
+                has_nunchuk=ready.has_nunchuk,
             )
             self._connected[device_path] = connected
             moved.append(connected)
@@ -165,6 +167,17 @@ class StateManager:
         if not device_path: return
         if device_path in self._connected: self._connected[device_path].battery_percent = percent
         if device_path in self._ready: self._ready[device_path].battery_percent = percent
+
+    def set_has_nunchuk(self, unique_id: str, has_nunchuk: bool) -> Optional["ConnectedController | ReadyController"]:
+        """Called when a Nunchuk extension attaches to/detaches from a Wii Remote."""
+        device_path = self._uid_to_path.get(unique_id)
+        if not device_path: return None
+        for coll in (self._connected, self._ready):
+            if device_path in coll:
+                c = coll[device_path]
+                c.has_nunchuk = has_nunchuk
+                return c
+        return None
 
     def refresh_profile(self, unique_id: str, profile: ControllerProfile):
         device_path = self._uid_to_path.get(unique_id)

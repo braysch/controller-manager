@@ -11,6 +11,7 @@ export interface Controller {
   paired_but_disconnected?: boolean
   guid?: string
   port?: number
+  has_nunchuk?: boolean
 }
 
 export interface ReadyController extends Controller {
@@ -52,6 +53,32 @@ export interface RawInputEvent {
   value: number
   min?: number
   max?: number
+  // "" (or omitted) for the main device itself; otherwise the attached
+  // extension's label (e.g. "Nunchuk", "Accelerometer") - a Nunchuk and the
+  // Wii Remote's own Accelerometer can report identical axis codes, so this
+  // is what distinguishes which sub-device an event actually came from.
+  source?: string
+}
+
+export interface InputConfigAxis {
+  code: string
+  min: number
+  max: number
+}
+
+export interface InputConfigDevice {
+  // Matching key exactly matching RawInputEvent.source (empty for the main
+  // device) - use `name` instead for anything user-visible.
+  label: string
+  name: string
+  keys: string[]
+  axes: InputConfigAxis[]
+}
+
+export interface InputConfigFocusResponse {
+  status: string
+  focused: string | null
+  devices: InputConfigDevice[]
 }
 
 export type WSEvent =

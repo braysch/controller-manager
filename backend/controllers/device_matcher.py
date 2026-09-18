@@ -4,9 +4,10 @@
 class SDLInfo:
     """SDL-compatible controller info (guid + port + vendor/product + device name)."""
 
-    def __init__(self, guid: str, port: int, vendor_id: int, product_id: int, device_name: str = ""):
+    def __init__(self, guid: str, port: int, vendor_id: int, product_id: int, device_name: str = "", has_nunchuk: bool = False):
         self.guid = guid
         self.port = port
         self.vendor_id = vendor_id
         self.product_id = product_id
         self.device_name = device_name
+        self.has_nunchuk = has_nunchuk

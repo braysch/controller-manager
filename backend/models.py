@@ -42,6 +42,7 @@ class ConnectedController(BaseModel):
     device_path: Optional[str] = None
     tr2_is_start: bool = False
     start_button_override: Optional[int] = None
+    has_nunchuk: bool = False
 
 
 class ReadyController(BaseModel):
@@ -63,6 +64,7 @@ class ReadyController(BaseModel):
     device_path: Optional[str] = None
     tr2_is_start: bool = False
     start_button_override: Optional[int] = None
+    has_nunchuk: bool = False
 
 
 class MoveToReadyRequest(BaseModel):

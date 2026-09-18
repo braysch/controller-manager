@@ -151,6 +151,32 @@ class MesenConfigWriter(EmulatorConfigWriter):
                 "Snes": {"Y": 4, "B": 2, "A": 6, "X": 5},
             },
         },
+        # Wii Remote + Nunchuk, held normally (two-handed), not sideways - the
+        # standard grip, so unlike the solo profile above, buttons keep their
+        # own natural roles rather than shifting for a 2-button-console
+        # convention: A -> "south", B -> "west", Nunchuk Z -> "east", Nunchuk
+        # C -> "north". 1/2 are deliberately left unassigned (they still emit
+        # the solo profile's own codes at the bridge level, but nothing here
+        # reads those codes, so they simply do nothing in this profile).
+        # Movement is the Nunchuk's stick, merged with the Wii Remote's own
+        # D-pad into the same synthetic hat (see
+        # evdev_monitor.py's _update_dpad_contribution) - either one moves.
+        # Same 26-29 D-pad slot numbers as the solo profile (same hat
+        # mechanism), so still pending the same live confirmation.
+        #
+        # Mesen's per-system field names follow the real SNES face-button
+        # layout (confirmed by the "wii" profile above, already shipped and
+        # working): A=east, B=south, X=north, Y=west - NOT the requested
+        # role names directly. So wiimote-A ("south") goes under "B", and
+        # Nunchuk-Z ("east") goes under "A" - the reverse of what the slot
+        # numbers' own comments suggest at a glance.
+        "wii_nunchuk": {
+            "default": {"Select": 10, "Start": 11, "Up": 29, "Down": 28, "Left": 27, "Right": 26},
+            "per_system": {
+                "Nes": {"A": 9, "B": 7, "X": 3, "Y": 8},
+                "Snes": {"A": 9, "B": 7, "X": 3, "Y": 8},
+            },
+        },
         # Keyboard uses Mesen's absolute key IDs (Core/Shared/KeyDefinitions.h),
         # not gamepad-base offsets, and doesn't vary by system. Layout: arrows =
         # D-pad, Z/X = B/A, A/S = Y/X, Q/W = L/R, Space = Select, Enter = Start.
@@ -211,6 +237,8 @@ class MesenConfigWriter(EmulatorConfigWriter):
         if "diswoe" in name_lower:
             return self.CONTROLLER_PROFILES["diswoe"]
         if "wii remote" in name_lower or (vid == 0x057E and pid == 0x0306):
+            if sdl_info is not None and sdl_info.has_nunchuk:
+                return self.CONTROLLER_PROFILES["wii_nunchuk"]
             return self.CONTROLLER_PROFILES["wii"]
         # Joy-Con (R)/(L), used solo and held sideways - product_ids match
         # state_manager.py's own combined-Joy-Con detection.

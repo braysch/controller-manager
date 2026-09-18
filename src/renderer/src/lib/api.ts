@@ -1,3 +1,5 @@
+import type { InputConfigFocusResponse } from '../types'
+
 const API_BASE = 'http://127.0.0.1:8000/api'
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -74,7 +76,7 @@ export const api = {
   getSounds: () => request<string[]>('/assets/sounds'),
 
   setInputConfigFocus: (unique_id: string | null) =>
-    request('/input-config/focus', {
+    request<InputConfigFocusResponse>('/input-config/focus', {
       method: 'POST',
       body: JSON.stringify({ unique_id })
     }),

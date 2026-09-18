@@ -12,11 +12,17 @@ function controllerReducer(state: ControllerState, action: ControllerAction): Co
     case 'SET_STATE':
       return { connected: action.connected, ready: action.ready }
 
-    case 'CONTROLLER_CONNECTED':
-      if (state.connected.some((c) => c.unique_id === action.controller.unique_id)) {
-        return state
+    case 'CONTROLLER_CONNECTED': {
+      const exists = state.connected.some((c) => c.unique_id === action.controller.unique_id)
+      return {
+        ...state,
+        connected: exists
+          ? state.connected.map((c) =>
+              c.unique_id === action.controller.unique_id ? action.controller : c
+            )
+          : [...state.connected, action.controller]
       }
-      return { ...state, connected: [...state.connected, action.controller] }
+    }
 
     case 'CONTROLLER_DISCONNECTED':
       return {
@@ -31,8 +37,14 @@ function controllerReducer(state: ControllerState, action: ControllerAction): Co
       const alreadyReady = state.ready.some(
         (c) => c.unique_id === action.controller.unique_id
       )
-      if (alreadyReady) return state
-      return { connected: remaining, ready: [...state.ready, action.controller] }
+      return {
+        connected: remaining,
+        ready: alreadyReady
+          ? state.ready.map((c) =>
+              c.unique_id === action.controller.unique_id ? action.controller : c
+            )
+          : [...state.ready, action.controller]
+      }
     }
 
     case 'CONTROLLER_UNREADY': {
