@@ -52,12 +52,15 @@ _BTN_START = 315
 _BTN_TR2 = 313
 # Wii Remote's "+" button reports as KEY_NEXT, not a conventional gamepad button code.
 _KEY_NEXT = 407
+# A solo Joy-Con (L) has no "+" (Start) button - its "-" reports as BTN_SELECT,
+# used here as the "ready" gesture in its place.
+_BTN_SELECT = 314
 SEED_TYPE_DEFAULTS = [
     ("Xbox Wireless Controller", "xbox-one.png", "xbox-one.mp3", 0x045E, 0x0B13, None, None),
     ("Xbox One Controller", "xbox-one.png", "xbox-one.mp3", 0x045E, 0x02EA, None, None),
     ("Xbox Controller", "xbox-one.png", "xbox-one.mp3", 0x045E, 0x0B12, None, None),
     ("Switch Pro Controller", "switch_pro.png", "switch.mp3", 0x057E, 0x2009, None, None),
-    ("Joy-Con (L)", "joycon_l.png", "switch.mp3", 0x057E, 0x2006, None, None),
+    ("Joy-Con (L)", "joycon_l.png", "switch.mp3", 0x057E, 0x2006, None, _BTN_SELECT),
     ("Joy-Con (R)", "joycon_r.png", "switch.mp3", 0x057E, 0x2007, None, None),
     ("Joy-Con (L+R)", "joycon_l.png", "switch.mp3", None, None, None, None),
     ("GameCube Controller Adapter", "gamecube.png", "switch_gamecube.mp3", 0x057E, 0x0337, None, None),
@@ -178,6 +181,17 @@ async def _migrate(db: aiosqlite.Connection) -> None:
         try:
             await db.execute("ALTER TABLE controllers ADD COLUMN start_button_override INTEGER")
         except Exception: pass
+
+        # A solo Joy-Con (L) has no "+" - fix up any already-seeded row (from
+        # before this had a start_button of its own) still missing one.
+        try:
+            await db.execute(
+                "UPDATE controller_type_defaults SET start_button = ? "
+                "WHERE vendor_id = 0x057E AND product_id = 0x2006 AND start_button IS NULL",
+                (_BTN_SELECT,),
+            )
+        except Exception:
+            pass
 
     cursor = await db.execute("SELECT COUNT(*) FROM schema_version")
     row = await cursor.fetchone()

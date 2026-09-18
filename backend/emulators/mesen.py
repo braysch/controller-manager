@@ -69,6 +69,53 @@ class MesenConfigWriter(EmulatorConfigWriter):
                 "Snes": {"A": 1, "B": 0, "X": 3, "Y": 4, "L": 8, "R": 9},
             },
         },
+        # Joy-Con (R) used solo, held sideways ("horizontal", one-Joy-Con retro
+        # style). Held upright it reports the standard Nintendo layout - A=East(1),
+        # B=South(0), X=North(3), Y=West(4) - but physically rotating it 90
+        # degrees clockwise for the sideways grip shifts which SNES-diamond
+        # position each button now sits in: A(East)->South, B(South)->West,
+        # X(North)->East, Y(West)->North. So each button feeds whichever SNES
+        # role normally occupies its new position: Snes A<-X(3), B<-A(1), X<-Y(4),
+        # Y<-B(0). For 2-button consoles, the two that land in the natural
+        # resting spots - physical A (now South) and B (now West) - are jump/run,
+        # same convention as a SNES pad used for NES games.
+        #
+        # The stick is reported as a SECOND axis pair, not the "left-stick axes"
+        # (14-17) every other profile above uses for its D-pad - that guess did
+        # nothing at all, confirmed via Mesen's own binding UI, which captured
+        # 21/20/22/23 instead (tilting the stick in the rotated direction for
+        # each of Mesen's Up/Down/Left/Right prompts, per the sideways rotation).
+        # L/R/Select were likewise captured directly rather than guessed.
+        "joycon_r": {
+            "default": {"Start": 11, "Up": 21, "Down": 20, "Left": 22, "Right": 23},
+            "per_system": {
+                "Nes": {"A": 1, "B": 0},
+                "Snes": {"A": 3, "B": 1, "X": 4, "Y": 0, "L": 6, "R": 8, "Select": 9},
+            },
+        },
+        # Joy-Con (L) used solo, held sideways. Unlike the R, its "diamond"
+        # (four D-pad-shaped) buttons are semantically a D-pad, so hid_nintendo
+        # reports them as BTN_DPAD_UP/DOWN/LEFT/RIGHT - but here they're used as
+        # action buttons (jump/speed/paddles/select), not movement. Mesen's fixed
+        # evdev enum doesn't read BTN_DPAD_* at all (confirmed empirically, same
+        # as the Wii Remote's D-pad), so EvdevMonitor (_create_joycon_l_bridge/
+        # _JOYCON_L_TRANSLATE) translates them into fresh slots (0/1/3/4) nothing
+        # else on this device uses, passing every other button and the stick
+        # through unchanged. Movement is the stick instead (also on the 14-17
+        # "left-stick axes" slots, unlike the R's stick, which needed a second
+        # axis pair - the two Joy-Cons apparently keep their own natural L/R
+        # stick identity even used solo). "-" (BTN_SELECT/314, passed through
+        # unchanged) serves as Start since there's no "+" on this side.
+        # All numbers here were captured directly via Mesen's own binding UI,
+        # not derived - see the conversation that produced this profile for the
+        # exact prompts used (which physical button was pressed for which role).
+        "joycon_l": {
+            "default": {"Select": 8, "Start": 10, "Up": 14, "Down": 15, "Left": 17, "Right": 16},
+            "per_system": {
+                "Nes": {"A": 3, "B": 0},
+                "Snes": {"A": 1, "B": 3, "X": 4, "Y": 0, "L": 7, "R": 9},
+            },
+        },
         # Wii Remote: Mesen's Linux button IDs are NOT an SDL/enumeration index — they're
         # a fixed internal enum hardcoded to specific evdev codes (see Mesen2's
         # Linux/LinuxGameController.cpp IsButtonPressed): 0=BTN_A, 1=BTN_B, 2=BTN_C,
@@ -165,6 +212,12 @@ class MesenConfigWriter(EmulatorConfigWriter):
             return self.CONTROLLER_PROFILES["diswoe"]
         if "wii remote" in name_lower or (vid == 0x057E and pid == 0x0306):
             return self.CONTROLLER_PROFILES["wii"]
+        # Joy-Con (R)/(L), used solo and held sideways - product_ids match
+        # state_manager.py's own combined-Joy-Con detection.
+        if (name_lower.endswith("(r)") and "joy-con" in name_lower) or (vid == 0x057E and pid == 0x2007):
+            return self.CONTROLLER_PROFILES["joycon_r"]
+        if (name_lower.endswith("(l)") and "joy-con" in name_lower) or (vid == 0x057E and pid == 0x2006):
+            return self.CONTROLLER_PROFILES["joycon_l"]
         if "lic" in name_lower or (vid == 0x057E and pid == 0x2009):
             return self.CONTROLLER_PROFILES["lic"]
         if "snes" in name_lower or (vid == 0x0079 and pid == 0x0126) or (vid == 0x057E and pid == 0x2017):
